@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="description" content="BURCHESS — самый сильный шахматный движок в мире. Играйте против нейросетевого движка, превосходящего Stockfish.">
+    <meta name="theme-color" content="#2c3e50">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>BURCHESS — Шахматы против супердвижка</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400;14..32,500;14..32,600;14..32,700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" type="image/x-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90' fill='%23333'%3E♟️%3C/text%3E%3C/svg%3E">
+    <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90' fill='%23333'%3E♟️%3C/text%3E%3C/svg%3E">
+</head>
+<body>
+    <div class="app">
+        <header class="main-header">
+            <div class="logo-area">
+                <h1>BURCHESS <span class="badge">SUPREME</span></h1>
+                <div class="engine-indicator" id="engine-status">
+                    <span class="status-led"></span>
+                    <span>Движок активен</span>
+                </div>
+            </div>
+            <div class="header-controls">
+                <button id="fullscreen-btn" class="icon-btn" title="Полный экран">⛶</button>
+                <button id="theme-toggle" class="icon-btn" title="Тёмная тема">🌙</button>
+            </div>
+        </header>
+
+        <div class="status-bar">
+            <div class="turn-indicator" id="turn-indicator">
+                <span class="turn-text">Ход белых</span>
+                <span class="turn-piece">♔</span>
+            </div>
+            <div class="game-timers">
+                <div class="timer white-timer" id="white-timer">15:00</div>
+                <div class="timer black-timer" id="black-timer">15:00</div>
+            </div>
+            <div class="eval-container" id="eval-container">
+                <div class="eval-bar-wrapper">
+                    <div class="eval-bar" id="eval-bar"><div class="eval-fill" id="eval-fill"></div></div>
+                </div>
+                <div class="eval-numeric" id="eval-numeric">+0.00</div>
+            </div>
+        </div>
+
+        <main class="game-main">
+            <div class="board-wrapper">
+                <canvas id="chess-canvas" width="600" height="600" class="chessboard"></canvas>
+                <div class="board-controls">
+                    <button id="new-game-btn" class="btn primary">♻️ Новая игра</button>
+                    <button id="flip-board-btn" class="btn">🔄 Перевернуть</button>
+                    <button id="undo-btn" class="btn">↩️ Отменить</button>
+                    <button id="settings-btn" class="btn">⚙️ Настройки</button>
+                    <button id="hint-btn" class="btn">💡 Подсказка</button>
+                </div>
+            </div>
+
+            <div class="info-panel">
+                <div class="move-history-section">
+                    <div class="section-header">
+                        <h3>📜 История ходов</h3>
+                        <button id="clear-history-btn" class="small-icon" title="Очистить историю">🗑️</button>
+                    </div>
+                    <div id="move-list" class="move-list scrollable"></div>
+                </div>
+                <div class="engine-thought-section">
+                    <div class="section-header">
+                        <h3>🧠 BURCHESS анализ</h3>
+                        <span id="search-depth" class="depth-badge">Глубина: -</span>
+                    </div>
+                    <div id="engine-thought" class="engine-thought">Ожидание хода...</div>
+                    <div class="pv-line" id="pv-line"></div>
+                    <div class="engine-stats">
+                        <span id="nodes-count">Узлов: 0</span>
+                        <span id="nps">NPS: 0</span>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <footer class="footer">
+            <div class="legal">BURCHESS v1.0 | Нейросетевой движок | Все правила шахмат реализованы</div>
+        </footer>
+
+        <!-- Модальные окна -->
+        <div id="settings-modal" class="modal">
+            <div class="modal-content glass">
+                <span class="close">&times;</span>
+                <h2>⚙️ Настройки игры</h2>
+                <div class="settings-group">
+                    <label>Сложность (глубина поиска): <span id="skill-value-display">15</span></label>
+                    <input type="range" id="skill-level" min="1" max="20" value="15" step="1">
+                </div>
+                <div class="settings-group">
+                    <label>Время на ход (мс):</label>
+                    <input type="number" id="move-time" value="1000" step="100" min="100" max="10000">
+                </div>
+                <div class="settings-group">
+                    <label>Игрок играет за:</label>
+                    <select id="player-color">
+                        <option value="white">Белые</option>
+                        <option value="black">Чёрные</option>
+                    </select>
+                </div>
+                <div class="settings-group">
+                    <label><input type="checkbox" id="sound-toggle" checked> 🔊 Звуковые эффекты</label>
+                </div>
+                <div class="settings-group">
+                    <label><input type="checkbox" id="show-coordinates"> Показывать координаты на доске</label>
+                </div>
+                <div class="settings-group">
+                    <label>Стиль фигур:</label>
+                    <select id="piece-style">
+                        <option value="merida">Merida (классические)</option>
+                        <option value="alpha">Alpha (современные)</option>
+                        <option value="cburnett">CBurnett (контрастные)</option>
+                    </select>
+                </div>
+                <div class="modal-buttons">
+                    <button id="save-settings" class="btn primary">Сохранить</button>
+                    <button id="reset-defaults" class="btn">Сброс</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="promotion-modal" class="modal promotion-modal">
+            <div class="modal-content glass">
+                <h3>Превращение пешки</h3>
+                <div class="promotion-pieces">
+                    <button data-piece="q" class="promo-btn">♕</button>
+                    <button data-piece="r" class="promo-btn">♖</button>
+                    <button data-piece="b" class="promo-btn">♗</button>
+                    <button data-piece="n" class="promo-btn">♘</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="game-over-modal" class="modal">
+            <div class="modal-content glass">
+                <h2 id="game-over-title">Игра окончена</h2>
+                <p id="game-over-message"></p>
+                <button id="game-over-new-game" class="btn primary">Новая игра</button>
+            </div>
+        </div>
+
+        <div id="toast-message" class="toast"></div>
+    </div>
+
+    <!-- Подключаем все модули (все файлы в корне) -->
+    <script src="ui.js"></script>
+    <script src="board.js"></script>
+    <script src="movehistory.js"></script>
+    <script src="sound.js"></script>
+    <script src="animations.js"></script>
+    <script src="settings.js"></script>
+    <script src="bridge.js"></script>
+    <script src="uci.js"></script>
+    <script src="worker.js"></script>
+    <script src="game.js"></script>
+    <script>
+        // Инициализация приложения после загрузки всех скриптов
+        window.addEventListener('DOMContentLoaded', () => {
+            if (window.GameApp && typeof window.GameApp.init === 'function') {
+                window.GameApp.init();
+            } else {
+                console.error('GameApp не загружен');
+            }
+        });
+    </script>
+</body>
+</html>
