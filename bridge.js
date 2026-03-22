@@ -11,15 +11,23 @@
     // URL к stockfish.wasm в облачном хранилище (замените на свой)
     const STOCKFISH_WASM_URL = 'https://storage.yandexcloud.net/demony/stockfish.wasm';
 
+    const bridgeT0 = performance.now();
+    const blogMsg = (msg) => console.log(`[Bridge +${((performance.now() - bridgeT0) / 1000).toFixed(1)}s] ${msg}`);
+
     function init(){
         if(Bridge.worker) return;
         try {
-            // Передаём URL к wasm через hash — stockfish.js использует его для загрузки
+            blogMsg('Создаём Worker: engine/stockfish.js');
             Bridge.worker = new Worker('engine/stockfish.js#' + encodeURIComponent(STOCKFISH_WASM_URL));
             Bridge.worker.onmessage = handleWorkerMessage;
-            Bridge.worker.onerror = (e) => console.error('Worker error:', e);
+            Bridge.worker.onerror = (e) => {
+                blogMsg('Worker ERROR: ' + (e.message || e));
+                console.error('Worker error:', e);
+            };
+            blogMsg('Worker создан, отправляем "uci"');
             sendCommand('uci');
         } catch(e){
+            blogMsg('ИСКЛЮЧЕНИЕ при создании Worker: ' + e.message);
             console.error('Failed to create worker:', e);
         }
     }
@@ -33,14 +41,17 @@
 
     function parseUCIOutput(line){
         if(line.startsWith('uciok')) {
+            blogMsg('Получен uciok — wasm загружен, движок инициализирован');
             // Настраиваем Stockfish на максимальную силу
             sendCommand('setoption name Skill Level value 20');
             sendCommand('setoption name Threads value 1');
             sendCommand('setoption name Hash value 32');
             sendCommand('setoption name Ponder value false');
+            blogMsg('Опции установлены, отправляем "isready"');
             sendCommand('isready');
         }
         else if(line.startsWith('readyok')) {
+            blogMsg('Получен readyok — движок полностью готов');
             Bridge.isReady = true;
             if(Bridge.callbacks.onReady) Bridge.callbacks.onReady();
         }

@@ -196,21 +196,31 @@
                 }, 400);
             }
 
+            const t0 = performance.now();
+            const log = (msg) => console.log(`[Loading +${((performance.now() - t0) / 1000).toFixed(1)}s] ${msg}`);
+
             // Запускаем движок через Bridge и ждём readyok
             if (window.Bridge) {
+                log('Bridge найден, вызываем Bridge.init()...');
                 loadingStatus.textContent = 'Загрузка движка (113 МБ)...';
                 window.Bridge.init();
-                const origCallbacks = { ...window.Bridge._callbacks };
+                log('Bridge.init() завершён, Worker создан. Ждём uciok → readyok...');
+
                 window.Bridge.setCallbacks({
                     onReady: function() {
+                        log('readyok получен — движок готов!');
                         // Движок готов — инициализируем игру и скрываем загрузку
                         if (window.Game && typeof window.Game.init === 'function') {
+                            log('Запускаем Game.init()...');
                             window.Game.init();
+                            log('Game.init() завершён');
                         }
                         hideLoadingScreen();
+                        log('Загрузочный экран скрыт');
                     }
                 });
             } else {
+                log('Bridge НЕ найден! Запускаем без движка');
                 // Если Bridge не загружен — просто запускаем игру
                 if (window.Game && typeof window.Game.init === 'function') {
                     window.Game.init();
