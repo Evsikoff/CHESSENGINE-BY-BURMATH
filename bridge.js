@@ -24,6 +24,9 @@
                 blogMsg('Worker ERROR: ' + (e.message || e));
                 console.error('Worker error:', e);
             };
+            Bridge.worker.onmessageerror = (e) => {
+                blogMsg('Worker MESSAGE ERROR: ' + e);
+            };
             blogMsg('Worker создан, отправляем "uci"');
             sendCommand('uci');
         } catch(e){
@@ -34,6 +37,7 @@
 
     function handleWorkerMessage(e){
         const msg = e.data;
+        blogMsg('Worker → ' + (typeof msg === 'string' ? msg.substring(0, 120) : JSON.stringify(msg)));
         if(typeof msg === 'string'){
             parseUCIOutput(msg);
         }
