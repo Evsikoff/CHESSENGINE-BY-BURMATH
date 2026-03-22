@@ -18,7 +18,19 @@
     <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90' fill='%23333'%3E♟️%3C/text%3E%3C/svg%3E">
 </head>
 <body>
-    <div class="app">
+    <!-- Экран загрузки движка -->
+    <div id="loading-screen" class="loading-screen">
+        <div class="loading-content">
+            <div class="loading-logo">BURCHESS</div>
+            <div class="loading-piece">♚</div>
+            <div class="loading-bar-track">
+                <div class="loading-bar-fill" id="loading-bar-fill"></div>
+            </div>
+            <div class="loading-status" id="loading-status">Загрузка движка...</div>
+        </div>
+    </div>
+
+    <div class="app" style="display:none;" id="app-container">
         <header class="main-header">
             <div class="logo-area">
                 <h1>BURCHESS <span class="badge">SUPREME</span></h1>
@@ -155,10 +167,55 @@
     <script src="game.js"></script>
     <script>
         window.addEventListener('DOMContentLoaded', () => {
-            if (window.Game && typeof window.Game.init === 'function') {
-                window.Game.init();
+            const loadingStatus = document.getElementById('loading-status');
+            const loadingFill = document.getElementById('loading-bar-fill');
+            const loadingScreen = document.getElementById('loading-screen');
+            const appContainer = document.getElementById('app-container');
+
+            // Анимация прогресс-бара во время загрузки wasm
+            let progress = 0;
+            const progressInterval = setInterval(() => {
+                // Медленно ползём до 90%, остальное — после readyok
+                if (progress < 90) {
+                    progress += Math.random() * 2;
+                    progress = Math.min(progress, 90);
+                    loadingFill.style.width = progress + '%';
+                }
+            }, 200);
+
+            function hideLoadingScreen() {
+                clearInterval(progressInterval);
+                loadingFill.style.width = '100%';
+                loadingStatus.textContent = 'Готово!';
+                setTimeout(() => {
+                    loadingScreen.classList.add('loading-hidden');
+                    appContainer.style.display = '';
+                    // Нужно обновить размер доски после показа
+                    if (window.Game && window.Game.resizeBoard) window.Game.resizeBoard();
+                    $(window).trigger('resize');
+                }, 400);
+            }
+
+            // Запускаем движок через Bridge и ждём readyok
+            if (window.Bridge) {
+                loadingStatus.textContent = 'Загрузка движка (113 МБ)...';
+                window.Bridge.init();
+                const origCallbacks = { ...window.Bridge._callbacks };
+                window.Bridge.setCallbacks({
+                    onReady: function() {
+                        // Движок готов — инициализируем игру и скрываем загрузку
+                        if (window.Game && typeof window.Game.init === 'function') {
+                            window.Game.init();
+                        }
+                        hideLoadingScreen();
+                    }
+                });
             } else {
-                console.error('Game module не загружен');
+                // Если Bridge не загружен — просто запускаем игру
+                if (window.Game && typeof window.Game.init === 'function') {
+                    window.Game.init();
+                }
+                hideLoadingScreen();
             }
         });
     </script>

@@ -57,14 +57,17 @@
             window.UI.updateTurnDisplay('white');
         }
 
-        // Инициализация движка
+        // Инициализация движка (Bridge.init() уже вызван из загрузочного экрана)
         if (window.Bridge) {
-            window.Bridge.init();
             window.Bridge.setCallbacks({
                 onReady: onEngineReady,
                 onBestMove: onEngineBestMove,
                 onInfo: onEngineInfo
             });
+            // Если движок уже готов к этому моменту
+            if (window.Bridge.getEngineReady()) {
+                onEngineReady();
+            }
         }
 
         // Инициализация истории
