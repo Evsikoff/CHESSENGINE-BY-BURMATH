@@ -259,14 +259,19 @@ body {
     min-width: 320px;
 }
 
-.chessboard {
+/* chessboard.js контейнер */
+.chessboard-container {
     width: 100%;
-    aspect-ratio: 1 / 1;
+    max-width: 600px;
+    margin: 0 auto;
     border-radius: 0.5rem;
     box-shadow: var(--shadow-lg);
-    background: var(--board-dark);
-    display: block;
-    cursor: pointer;
+    overflow: hidden;
+}
+
+/* Убираем лишние отступы у chessboard.js */
+#chess-board .board-b72b1 {
+    border: none !important;
 }
 
 .board-controls {
@@ -436,6 +441,25 @@ body {
 
 .close:hover {
     color: var(--danger);
+}
+
+.small-icon {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 1rem;
+    color: var(--text-secondary);
+    padding: 0.2rem;
+}
+
+.small-icon:hover {
+    color: var(--danger);
+}
+
+.modal-buttons {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 1rem;
 }
 
 .settings-group {

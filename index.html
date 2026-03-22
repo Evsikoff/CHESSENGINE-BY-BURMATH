@@ -11,6 +11,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400;14..32,500;14..32,600;14..32,700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.css">
     <link rel="stylesheet" href="styles.css">
     <link rel="manifest" href="manifest.json">
     <link rel="icon" type="image/x-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90' fill='%23333'%3E♟️%3C/text%3E%3C/svg%3E">
@@ -51,7 +52,7 @@
 
         <main class="game-main">
             <div class="board-wrapper">
-                <canvas id="chess-canvas" width="600" height="600" class="chessboard"></canvas>
+                <div id="chess-board" class="chessboard-container"></div>
                 <div class="board-controls">
                     <button id="new-game-btn" class="btn primary">♻️ Новая игра</button>
                     <button id="flip-board-btn" class="btn">🔄 Перевернуть</button>
@@ -94,14 +95,6 @@
                 <span class="close">&times;</span>
                 <h2>⚙️ Настройки игры</h2>
                 <div class="settings-group">
-                    <label>Сложность (глубина поиска): <span id="skill-value-display">15</span></label>
-                    <input type="range" id="skill-level" min="1" max="20" value="15" step="1">
-                </div>
-                <div class="settings-group">
-                    <label>Время на ход (мс):</label>
-                    <input type="number" id="move-time" value="1000" step="100" min="100" max="10000">
-                </div>
-                <div class="settings-group">
                     <label>Игрок играет за:</label>
                     <select id="player-color">
                         <option value="white">Белые</option>
@@ -109,18 +102,14 @@
                     </select>
                 </div>
                 <div class="settings-group">
+                    <label>Время на партию (минут):</label>
+                    <input type="number" id="game-time" value="15" step="1" min="1" max="60">
+                </div>
+                <div class="settings-group">
                     <label><input type="checkbox" id="sound-toggle" checked> 🔊 Звуковые эффекты</label>
                 </div>
                 <div class="settings-group">
-                    <label><input type="checkbox" id="show-coordinates"> Показывать координаты на доске</label>
-                </div>
-                <div class="settings-group">
-                    <label>Стиль фигур:</label>
-                    <select id="piece-style">
-                        <option value="merida">Merida (классические)</option>
-                        <option value="alpha">Alpha (современные)</option>
-                        <option value="cburnett">CBurnett (контрастные)</option>
-                    </select>
+                    <label><input type="checkbox" id="show-coordinates" checked> Показывать координаты на доске</label>
                 </div>
                 <div class="modal-buttons">
                     <button id="save-settings" class="btn primary">Сохранить</button>
@@ -152,24 +141,24 @@
         <div id="toast-message" class="toast"></div>
     </div>
 
-    <!-- Подключаем все модули (все файлы в корне) -->
-    <script src="ui.js"></script>
-    <script src="board.js"></script>
-    <script src="movehistory.js"></script>
+    <!-- Библиотеки -->
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/chess.js/0.10.3/chess.min.js"></script>
+    <script src="https://unpkg.com/@chrisoakman/chessboardjs@1.0.0/dist/chessboard-1.0.0.min.js"></script>
+
+    <!-- Модули приложения -->
     <script src="sound.js"></script>
-    <script src="animations.js"></script>
     <script src="settings.js"></script>
+    <script src="ui.js"></script>
+    <script src="movehistory.js"></script>
     <script src="bridge.js"></script>
-    <script src="uci.js"></script>
-    <script src="worker.js"></script>
     <script src="game.js"></script>
     <script>
-        // Инициализация приложения после загрузки всех скриптов
         window.addEventListener('DOMContentLoaded', () => {
-            if (window.GameApp && typeof window.GameApp.init === 'function') {
-                window.GameApp.init();
+            if (window.Game && typeof window.Game.init === 'function') {
+                window.Game.init();
             } else {
-                console.error('GameApp не загружен');
+                console.error('Game module не загружен');
             }
         });
     </script>
