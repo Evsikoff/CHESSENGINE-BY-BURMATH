@@ -8,10 +8,14 @@
         lastInfo: null
     };
 
+    // URL к stockfish.wasm в облачном хранилище (замените на свой)
+    const STOCKFISH_WASM_URL = 'https://storage.yandexcloud.net/demony/stockfish.wasm';
+
     function init(){
         if(Bridge.worker) return;
         try {
-            Bridge.worker = new Worker('engine/stockfish.js');
+            // Передаём URL к wasm через hash — stockfish.js использует его для загрузки
+            Bridge.worker = new Worker('engine/stockfish.js#' + encodeURIComponent(STOCKFISH_WASM_URL));
             Bridge.worker.onmessage = handleWorkerMessage;
             Bridge.worker.onerror = (e) => console.error('Worker error:', e);
             sendCommand('uci');
