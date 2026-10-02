@@ -4,7 +4,11 @@
         gameTime: 15,
         soundEnabled: true,
         showCoordinates: true,
-        theme: 'light'
+        theme: 'light',
+        gameMode: 'human',
+        opponentEngine: 'old',
+        whiteEngine: 'old',
+        blackEngine: 'new'
     };
 
     var current = {};

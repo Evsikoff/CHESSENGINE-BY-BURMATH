@@ -71,11 +71,17 @@
     margin: 0 auto;
 }
 
-.connection-indicator {
+.connection-indicators {
     position: fixed;
     top: calc(0.75rem + env(safe-area-inset-top, 0px));
     right: calc(0.75rem + env(safe-area-inset-right, 0px));
     z-index: 10001;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.connection-indicator {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -190,7 +196,7 @@ body {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 1rem 2.5rem 1rem 1.5rem;
+    padding: 1rem 4.5rem 1rem 1.5rem;
     background: var(--bg-secondary);
     border-radius: 1rem;
     margin-bottom: 1.5rem;
@@ -424,6 +430,78 @@ body {
     color: white;
 }
 
+.btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+}
+
+[hidden] {
+    display: none !important;
+}
+
+.game-setup {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 0.8rem 1rem;
+    background: var(--bg-secondary);
+    border-radius: 1rem;
+    padding: 1rem 1.5rem;
+    margin-bottom: 1rem;
+    box-shadow: var(--shadow-sm);
+}
+
+.setup-field {
+    flex: 1 1 210px;
+    min-width: 0;
+}
+
+.setup-field label {
+    display: block;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    font-weight: 500;
+    margin-bottom: 0.3rem;
+}
+
+.setup-field select {
+    width: 100%;
+    min-height: 38px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    padding: 0.4rem 0.6rem;
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    font: inherit;
+    font-size: 0.85rem;
+}
+
+.arena-engine-fields {
+    display: flex;
+    flex-wrap: wrap;
+    flex: 2 1 430px;
+    gap: 0.8rem;
+    min-width: 0;
+}
+
+.setup-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.setup-actions .btn {
+    min-height: 38px;
+}
+
+.setup-message {
+    flex-basis: 100%;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
 /* Info panel */
 .info-panel {
     flex: 1;
@@ -631,7 +709,8 @@ body {
     opacity: 0;
     transition: opacity 0.3s;
     z-index: 1100;
-    white-space: nowrap;
+    max-width: calc(100vw - 2rem);
+    text-align: center;
 }
 
 .toast.show {
@@ -658,6 +737,28 @@ body {
 @media (max-width: 768px) {
     .app {
         padding: 0.5rem;
+    }
+    .main-header {
+        padding: 1rem 4.5rem 1rem 1rem;
+    }
+    .game-setup {
+        padding: 0.8rem 1rem;
+    }
+    .setup-field,
+    .arena-engine-fields {
+        flex-basis: 100%;
+    }
+    .setup-actions {
+        width: 100%;
+    }
+    .setup-actions .btn {
+        flex: 1;
+        justify-content: center;
+    }
+    .board-wrapper,
+    .info-panel {
+        min-width: 0;
+        width: 100%;
     }
     .status-bar {
         flex-direction: column;

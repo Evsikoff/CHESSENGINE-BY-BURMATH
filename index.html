@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <meta name="description" content="BURCHESS — самый сильный шахматный движок в мире. Играйте против нейросетевого движка, превосходящего Stockfish.">
+    <meta name="description" content="BURCHESS — шахматы с движками Марика. Играйте с выбранным соперником или наблюдайте партию двух движков.">
     <meta name="theme-color" content="#2c3e50">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -18,9 +18,15 @@
     <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90' fill='%23333'%3E♟️%3C/text%3E%3C/svg%3E">
 </head>
 <body>
-    <div id="connection-status" class="connection-indicator connecting" role="status" aria-live="polite" aria-label="Проверка соединения с «супер движок Марика»" title="Проверка соединения с «супер движок Марика»" tabindex="0">
-        <span class="connection-dot" aria-hidden="true"></span>
-        <span class="visually-hidden" id="connection-status-text">Проверка соединения с «супер движок Марика»</span>
+    <div class="connection-indicators" aria-label="Доступность движков">
+        <div id="connection-status-old" class="connection-indicator connecting" role="status" aria-live="polite" aria-label="Старый движок Марика: подключение" title="Старый движок Марика: подключение" tabindex="0">
+            <span class="connection-dot" aria-hidden="true"></span>
+            <span class="visually-hidden" id="connection-status-old-text">Старый движок Марика: подключение</span>
+        </div>
+        <div id="connection-status-new" class="connection-indicator connecting" role="status" aria-live="polite" aria-label="Новый движок Марика: подключение" title="Новый движок Марика: подключение" tabindex="0">
+            <span class="connection-dot" aria-hidden="true"></span>
+            <span class="visually-hidden" id="connection-status-new-text">Новый движок Марика: подключение</span>
+        </div>
     </div>
     <!-- Экран загрузки движка -->
     <div id="loading-screen" class="loading-screen">
@@ -48,6 +54,44 @@
                 <button id="theme-toggle" class="icon-btn" title="Тёмная тема">🌙</button>
             </div>
         </header>
+
+        <section class="game-setup" aria-label="Выбор режима и движка">
+            <div class="setup-field">
+                <label for="game-mode">Режим игры</label>
+                <select id="game-mode">
+                    <option value="human">Игрок против движка</option>
+                    <option value="arena">Движок против движка</option>
+                </select>
+            </div>
+            <div class="setup-field" id="human-engine-field">
+                <label for="opponent-engine">Ваш соперник</label>
+                <select id="opponent-engine">
+                    <option value="old">Старый движок Марика</option>
+                    <option value="new">Новый движок Марика</option>
+                </select>
+            </div>
+            <div class="arena-engine-fields" id="arena-engine-fields" hidden>
+                <div class="setup-field">
+                    <label for="white-engine">Белые</label>
+                    <select id="white-engine">
+                        <option value="old">Старый движок Марика</option>
+                        <option value="new">Новый движок Марика</option>
+                    </select>
+                </div>
+                <div class="setup-field">
+                    <label for="black-engine">Чёрные</label>
+                    <select id="black-engine">
+                        <option value="new">Новый движок Марика</option>
+                        <option value="old">Старый движок Марика</option>
+                    </select>
+                </div>
+            </div>
+            <div class="setup-actions">
+                <button id="start-game-btn" class="btn primary">▶ Начать партию</button>
+                <button id="arena-pause-btn" class="btn" hidden>⏸ Пауза</button>
+            </div>
+            <p class="setup-message" id="game-setup-message" role="status" aria-live="polite">Проверка доступности движков...</p>
+        </section>
 
         <div class="status-bar">
             <div class="turn-indicator" id="turn-indicator">
@@ -102,7 +146,7 @@
         </main>
 
         <footer class="footer">
-            <div class="legal">BURCHESS v1.0 | Нейросетевой движок | Все правила шахмат реализованы</div>
+            <div class="legal">BURCHESS | Движки Марика | Все правила шахмат реализованы</div>
         </footer>
 
         <!-- Модальные окна -->
@@ -168,6 +212,7 @@
     <script src="ui.js"></script>
     <script src="movehistory.js"></script>
     <script src="bridge.js"></script>
+    <script src="engine-bridge.js"></script>
     <script src="game.js"></script>
     <script>
         window.addEventListener('DOMContentLoaded', () => {
@@ -213,22 +258,24 @@
                 hideLoadingScreen();
             }
 
-            // Подписываемся до init(): удалённый движок может подключиться сразу.
+            // Подписываемся до init(): движки могут подключиться сразу.
             if (window.Bridge) {
                 window.Bridge.setCallbacks({
                     onReady: function() {
                         log('Движок готов');
                         startGame();
                     },
-                    onConnectionChange: function(connected, state) {
-                        if (window.UI) window.UI.setConnectionStatus(connected, state);
+                    onProvidersChange: function(providers) {
+                        if (window.UI) window.UI.updateProviders(providers);
                         if (gameStarted) return;
-                        if (state === 'remote') {
-                            loadingStatus.textContent = 'супер движок Марика подключён';
-                        } else if (state === 'local') {
-                            loadingStatus.textContent = 'супер движок Марика недоступен. Загрузка локального движка (113 МБ)...';
-                        } else if (state === 'connecting') {
+                        if (providers.old.connected && providers.new.connected) {
+                            loadingStatus.textContent = 'Оба движка Марика готовы';
+                        } else if (providers.old.connected || providers.new.connected) {
+                            loadingStatus.textContent = 'Движок Марика готов. Проверка второго движка...';
+                        } else if (providers.old.state === 'connecting' || providers.new.state === 'connecting') {
                             loadingStatus.textContent = 'Подключение к серверу с движком президента школы Марика';
+                        } else {
+                            loadingStatus.textContent = 'Подготовка резервного движка...';
                         }
                     },
                     onError: function(error) {
@@ -239,7 +286,7 @@
                         loadingStatus.textContent = 'Не удалось загрузить движок. Проверьте подключение и обновите страницу.';
                     }
                 });
-                log('Проверяем соединение с «супер движок Марика»');
+                log('Подключаем движки Марика');
                 window.Bridge.init();
             } else {
                 log('Bridge НЕ найден! Запускаем без движка');

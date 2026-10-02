@@ -131,8 +131,8 @@ function createHarness({ webSocketAvailable = true } = {}) {
         return worker;
     }
 
-    function online() {
-        bridge.init();
+    function online(options) {
+        bridge.init(options);
         const socket = sockets.at(-1);
         socket.open();
         return socket;
@@ -468,4 +468,37 @@ test('a reused local worker that never answers isready times out the new game', 
     assert.equal(worker.terminated, true);
     assert.equal(h.bridge.getConnectionState(), 'error');
     assert.equal(h.errors.length, 1);
+});
+
+test('an arena disconnect reports failure without substituting the local engine', () => {
+    const h = createHarness();
+    const socket = h.online({ remoteOnly: true });
+    const failures = [];
+    const request = h.search(AFTER_E4, {
+        allowFallback: false,
+        onError: error => failures.push(error),
+    });
+    socket.close();
+    h.result(socket, request, 'e7e5');
+    h.clock.tick(10000);
+    assert.equal(h.workers.length, 0);
+    assert.deepEqual(h.moves, []);
+    assert.equal(failures.length, 1);
+    assert.equal(h.bridge.isSearching(), false);
+});
+
+test('an invalid arena move cannot resume the search with the local engine', () => {
+    const h = createHarness();
+    const socket = h.online({ remoteOnly: true });
+    const failures = [];
+    const request = h.search(AFTER_E4, {
+        allowFallback: false,
+        validateMove: move => move === 'e7e5',
+        onError: error => failures.push(error),
+    });
+    h.result(socket, request, 'e2e4');
+    assert.equal(h.workers.length, 0);
+    assert.deepEqual(h.moves, []);
+    assert.equal(failures.length, 1);
+    assert.equal(h.bridge.isSearching(), false);
 });

@@ -15,6 +15,7 @@
         socket: null,
         callbacks: {},
         initialized: false,
+        remoteOnly: false,
         ready: false,
         connection: 'local',
         localReady: false,
@@ -32,6 +33,8 @@
         drainTimer: null,
         readyPromise: null,
         resolveReady: null,
+        localReadyPromise: null,
+        resolveLocalReady: null,
         session: 0,
         requestId: 0,
         completedRemoteTasks: new Set(),
@@ -108,21 +111,33 @@
     }
 
     function useLocal() {
+        let failedRequest = null;
         if (state.active && state.active.source === 'remote') {
             clearTimeout(state.active.timer);
             state.active.timer = null;
-            state.active.source = 'pending';
-            state.active.candidate = null;
+            if (state.active.options.allowFallback === false) {
+                failedRequest = state.active;
+                state.active = null;
+            } else {
+                state.active.source = 'pending';
+                state.active.candidate = null;
+            }
         }
         closeSocket();
         setReady(false);
         setConnection('local');
+        if (state.remoteOnly) {
+            finishReadyCheck(false);
+            if (failedRequest && failedRequest.onError) failedRequest.onError('Старый движок Марика недоступен.');
+            return;
+        }
         ensureLocalWorker();
         if (state.localReady) {
             setReady(true);
             finishReadyCheck(true);
             pumpSearch();
         }
+        if (failedRequest && failedRequest.onError) failedRequest.onError('Старый движок Марика недоступен.');
     }
 
     function workerCommand(command) {
@@ -141,8 +156,10 @@
         const worker = state.worker;
         state.worker = null;
         state.localReady = state.localUciInitialized = state.localAwaitingReady = false;
+        state.localReadyPromise = null;
         state.localActive = null;
         state.localDraining = false;
+        if (state.callbacks.onLocalReady) state.callbacks.onLocalReady(false);
         if (worker) {
             worker.onmessage = worker.onerror = worker.onmessageerror = null;
             worker.terminate();
@@ -150,15 +167,24 @@
     }
 
     function failLocal(error) {
-        const selected = state.connection === 'local';
+        const request = state.active;
+        const selected = state.connection === 'local' || (request && request.options.local);
         disposeWorker();
+        if (state.resolveLocalReady) {
+            state.resolveLocalReady(false);
+            state.resolveLocalReady = null;
+            state.localReadyPromise = null;
+        }
+        if (state.callbacks.onLocalReady) state.callbacks.onLocalReady(false);
         if (!selected) return;
         if (state.active) clearTimeout(state.active.timer);
         state.active = null;
         setReady(false);
-        setConnection('error');
+        if (state.connection !== 'remote') setConnection('error');
         finishReadyCheck(false);
-        if (state.callbacks.onError) {
+        if (request && request.onError) {
+            request.onError(error && error.message ? error.message : 'Не удалось запустить локальный движок.');
+        } else if (state.callbacks.onError) {
             state.callbacks.onError(error && error.message ? error.message : 'Не удалось запустить локальный движок.');
         }
     }
@@ -216,11 +242,17 @@
             state.localReady = true;
             clearTimeout(state.bootTimer);
             state.bootTimer = null;
+            if (state.resolveLocalReady) {
+                state.resolveLocalReady(true);
+                state.resolveLocalReady = null;
+            }
+            if (state.callbacks.onLocalReady) state.callbacks.onLocalReady(true);
             if (state.connection === 'local') {
                 setReady(true);
                 finishReadyCheck(true);
                 pumpSearch();
             }
+            else pumpSearch();
         } else if (line.startsWith('bestmove ')) {
             handleLocalBestMove(line);
         } else if (line.startsWith('info ') && line.includes('depth')) {
@@ -389,11 +421,14 @@
 
     function pumpSearch() {
         const request = state.active;
-        if (!request || request.source !== 'pending' || !state.ready) return;
-        if (state.connection === 'remote') {
+        if (!request || request.source !== 'pending') return;
+        if (request.options.local) {
+            if (!state.localReady || state.localActive || state.localDraining) return;
+        } else if (!state.ready) return;
+        if (!request.options.local && state.connection === 'remote') {
             if (state.socket && state.socket.readyState === 1) startRemoteSearch(request);
             else useLocal();
-        } else if (state.connection === 'local' && state.localReady && !state.localActive && !state.localDraining) {
+        } else if ((request.options.local || state.connection === 'local') && state.localReady && !state.localActive && !state.localDraining) {
             request.source = 'local';
             state.localActive = request;
             let command = 'position fen ' + request.fen;
@@ -427,8 +462,9 @@
         completeSearch(request, move, ponder);
     }
 
-    function init() {
+    function init(options) {
         if (state.initialized) return state.readyPromise || Promise.resolve(state.ready);
+        state.remoteOnly = !!(options && options.remoteOnly);
         state.initialized = true;
         state.session++;
         const promise = beginReadyCheck();
@@ -436,8 +472,9 @@
         return promise;
     }
 
-    function newGame() {
+    function newGame(options) {
         stopSearch();
+        if (options && options.remoteOnly !== undefined) state.remoteOnly = !!options.remoteOnly;
         state.initialized = true;
         state.session++;
         state.lastBestMove = state.lastInfo = null;
@@ -446,6 +483,8 @@
         if (!reuseRemote) setConnection('connecting');
         if (state.worker) {
             state.localReady = false;
+            if (!state.resolveLocalReady) state.localReadyPromise = null;
+            if (state.callbacks.onLocalReady) state.callbacks.onLocalReady(false);
             state.localResetPending = true;
             requestLocalReady();
         }
@@ -473,9 +512,11 @@
             serverTaskId: null,
             onBestMove: typeof options.onBestMove === 'function' ? options.onBestMove : state.callbacks.onBestMove,
             onInfo: typeof options.onInfo === 'function' ? options.onInfo : state.callbacks.onInfo,
-            validateMove: typeof options.validateMove === 'function' ? options.validateMove : null
+            validateMove: typeof options.validateMove === 'function' ? options.validateMove : null,
+            onError: typeof options.onError === 'function' ? options.onError : null
         };
-        if (!state.initialized) init();
+        if (options.local) ensureFallback();
+        else if (!state.initialized) init();
         else if (state.connection === 'error') useLocal();
         else if (state.connection === 'connecting' && !state.socket) connectRemote();
         pumpSearch();
@@ -518,6 +559,8 @@
         finishReadyCheck(false);
         closeSocket();
         disposeWorker();
+        if (state.resolveLocalReady) state.resolveLocalReady(false);
+        state.resolveLocalReady = state.localReadyPromise = null;
         state.initialized = false;
         state.readyPromise = null;
         setReady(false);
@@ -528,7 +571,24 @@
         state.callbacks = Object.assign({}, state.callbacks, callbacks);
     }
 
-    window.Bridge = {
+    function ensureFallback() {
+        if (state.localReady) return Promise.resolve(true);
+        if (state.localReadyPromise) return state.localReadyPromise;
+        state.localReadyPromise = new Promise(function (resolve) { state.resolveLocalReady = resolve; });
+        const promise = state.localReadyPromise;
+        ensureLocalWorker();
+        return promise;
+    }
+
+    function ensureRemote() {
+        if (state.socket && state.socket.readyState === 1) return Promise.resolve(true);
+        if (state.socket && state.connection === 'connecting') return state.readyPromise;
+        const promise = beginReadyCheck();
+        connectRemote();
+        return promise;
+    }
+
+    window.LegacyBridge = window.Bridge = {
         init: init,
         newGame: newGame,
         setPosition: setPosition,
@@ -537,6 +597,9 @@
         setOption: setOption,
         quit: quit,
         setCallbacks: setCallbacks,
+        ensureFallback: ensureFallback,
+        ensureRemote: ensureRemote,
+        getLocalReady: function () { return state.localReady; },
         getInfo: function () { return state.lastInfo; },
         isSearching: function () { return !!state.active; },
         getLastBestMove: function () { return state.lastBestMove; },

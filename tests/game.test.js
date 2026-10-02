@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
+const { FakeClock } = require('./support/clock');
 
 const START = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 const E4 = 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1';
@@ -54,7 +55,8 @@ class OpeningChess {
     in_check() { return false; }
 }
 
-function createHarness({ playerColor = 'white', ready = true, immediateMove } = {}) {
+function createHarness({ playerColor = 'white', ready = true, immediateMove, gameEndsAfter } = {}) {
+    const clock = new FakeClock();
     const searches = [];
     const events = [];
     const highlights = [];
@@ -66,8 +68,16 @@ function createHarness({ playerColor = 'white', ready = true, immediateMove } = 
     const bridge = {
         callbacks: {},
         ready,
+        activeEngine: 'old',
+        providers: {
+            old: { id: 'old', name: 'Старый движок Марика', ready: true, connected: true, state: 'ready' },
+            new: { id: 'new', name: 'Новый движок Марика', ready: true, connected: true, state: 'ready' },
+        },
         setCallbacks(callbacks) { Object.assign(this.callbacks, callbacks); },
-        getEngineReady() { return this.ready; },
+        getEngineReady(id) { return this.ready && (!id || id === 'local' || this.providers[id]?.ready); },
+        getProviders() { return this.providers; },
+        getActiveEngine() { return this.activeEngine; },
+        setActiveEngine(id) { this.activeEngine = id; return true; },
         getRemoteConnected() { return true; },
         getConnectionState() { return 'remote'; },
         setPosition(fen) { this.fen = fen; },
@@ -89,7 +99,13 @@ function createHarness({ playerColor = 'white', ready = true, immediateMove } = 
         startTimers() { events.push('timers'); },
         getWhiteTime() { return 900; },
         getBlackTime() { return 800; },
-        updateTurnDisplay() {}, setEngineStatus() {}, setConnectionStatus() {},
+        updateTurnDisplay() {}, setEngineStatus() {}, setConnectionStatus() {}, setProviders() {},
+        updateProviders() {}, setActiveEngine() {},
+        setGameMode() {}, setArenaState() {},
+        pauseTimers() { events.push('pauseTimers'); },
+        stopTimers() { events.push('stopTimers'); },
+        resumeTimers() { events.push('resumeTimers'); },
+        showGameOverMessage(message) { events.push(message); },
         updateEngineInfo() {}, setGameOver() {}, showToast() {},
     };
     const board = {
@@ -108,16 +124,19 @@ function createHarness({ playerColor = 'white', ready = true, immediateMove } = 
                     historyMoves.push(args[1]);
                 },
                 undo() { historyMoves.pop(); },
+                setResult(result) { events.push('result:' + result); },
             },
         },
-        Chess: OpeningChess,
+        Chess: gameEndsAfter ? class extends OpeningChess {
+            in_checkmate() { return this._history.length >= gameEndsAfter; }
+        } : OpeningChess,
         Chessboard: (_element, config) => { boardConfig = config; return board; },
         $: selector => ({
             on() {},
             css(_property, value) { highlights.push({ selector, value }); },
         }),
-        setTimeout: () => 1,
-        clearTimeout() {},
+        setTimeout: clock.setTimeout.bind(clock),
+        clearTimeout: clock.clearTimeout.bind(clock),
         console: { log() {}, warn() {}, error() {} },
     };
     vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', 'game.js'), 'utf8'), context,
@@ -135,7 +154,7 @@ function createHarness({ playerColor = 'white', ready = true, immediateMove } = 
         resetResolvers[index](success);
     }
     return {
-        game, bridge, ui, searches, events, highlights, historyMoves, positions,
+        game, bridge, ui, searches, events, highlights, historyMoves, positions, clock,
         completeSearch, engineReady, finishNewGame, get boardConfig() { return boardConfig; },
     };
 }
@@ -286,4 +305,156 @@ test('overlapping new games only start a move for the latest reset', async () =>
     h.finishNewGame(true, 1);
     await currentReset;
     assert.equal(h.searches.length, 2);
+});
+
+async function startArena(h, { whiteEngine = 'old', blackEngine = 'new' } = {}) {
+    const started = h.game.startGame({ mode: 'arena', whiteEngine, blackEngine });
+    h.finishNewGame();
+    await started;
+    assert.equal(h.game.getGameMode(), 'arena');
+}
+
+test('human play uses the opponent selected in the new game controls', async () => {
+    const h = createHarness();
+    const started = h.game.startGame({ mode: 'human', opponentEngine: 'new' });
+    h.finishNewGame();
+    await started;
+    assert.equal(h.bridge.getActiveEngine(), 'new');
+    assert.equal(h.game.makeMove('e2', 'e4'), true);
+    assert.equal(h.searches.length, 1);
+    assert.equal(h.searches[0].options.engine, 'new');
+    h.completeSearch(0, 'e7e5');
+    assert.equal(h.game.getCurrentFEN(), E4_E5);
+});
+
+test('arena alternates the selected engines with a visible pause between moves', async () => {
+    const h = createHarness();
+    await startArena(h, { whiteEngine: 'new', blackEngine: 'old' });
+    assert.equal(h.searches.length, 1);
+    assert.equal(h.searches[0].options.engine, 'new');
+    assert.equal(h.searches[0].options.allowFallback, false);
+    h.completeSearch(0, 'e2e4');
+    assert.equal(h.game.getCurrentFEN(), E4);
+    assert.equal(h.searches.length, 1);
+    h.clock.tick(299);
+    assert.equal(h.searches.length, 1);
+    h.clock.tick(1);
+    assert.equal(h.searches.length, 2);
+    assert.equal(h.searches[1].options.engine, 'old');
+    assert.equal(h.searches[1].options.allowFallback, false);
+    assert.equal(h.searches[1].fen, E4_ENGINE);
+    h.completeSearch(1, 'e7e5');
+    h.clock.tick(300);
+    assert.equal(h.searches.length, 3);
+    assert.equal(h.searches[2].options.engine, 'new');
+    h.completeSearch(2, 'g1f3');
+    assert.deepEqual(h.historyMoves, ['e2e4', 'e7e5', 'g1f3']);
+});
+
+test('arena prevents human moves, drags, hints and undo even between engine turns', async () => {
+    const h = createHarness();
+    await startArena(h);
+    assert.equal(h.game.makeMove('e2', 'e4'), false);
+    assert.equal(h.boardConfig.onDragStart('e2', 'wP'), false);
+    assert.equal(h.boardConfig.onDrop('e2', 'e4'), 'snapback');
+    h.completeSearch(0, 'e2e4');
+    h.clock.tick(300);
+    h.completeSearch(1, 'e7e5');
+    const count = h.searches.length;
+    h.game.hint();
+    assert.equal(h.game.undo(), false);
+    assert.equal(h.game.makeMove('g1', 'f3'), false);
+    assert.equal(h.searches.length, count);
+    assert.equal(h.game.getCurrentFEN(), E4_E5);
+});
+
+test('pausing an arena search rejects its late result and resumes the same position once', async () => {
+    const h = createHarness();
+    await startArena(h);
+    h.game.toggleArenaPause();
+    assert.equal(h.game.getArenaPaused(), true);
+    assert.ok(h.events.includes('stop'));
+    h.completeSearch(0, 'e2e4');
+    assert.equal(h.game.getCurrentFEN(), START);
+    h.clock.tick(1000);
+    assert.equal(h.searches.length, 1);
+    const resuming = h.game.toggleArenaPause();
+    h.finishNewGame();
+    await resuming;
+    assert.equal(h.game.getArenaPaused(), false);
+    assert.equal(h.searches.length, 2);
+    assert.equal(h.searches[1].fen, START);
+    assert.equal(h.events.filter(event => event === 'timers').length, 2,
+        'resume preserves clocks instead of starting another game timer');
+    h.engineReady();
+    assert.equal(h.searches.length, 2);
+    h.completeSearch(1, 'e2e4');
+    assert.equal(h.game.getCurrentFEN(), E4);
+});
+
+test('pausing between arena moves cancels the queued next turn', async () => {
+    const h = createHarness();
+    await startArena(h);
+    h.completeSearch(0, 'e2e4');
+    h.game.toggleArenaPause();
+    h.clock.tick(1000);
+    assert.equal(h.searches.length, 1);
+    const resuming = h.game.toggleArenaPause();
+    h.finishNewGame();
+    await resuming;
+    assert.equal(h.searches.length, 2);
+    assert.equal(h.searches[1].fen, E4_ENGINE);
+    assert.equal(h.searches[1].options.engine, 'new');
+});
+
+test('losing an arena provider pauses the game and rejects a pending move', async () => {
+    const h = createHarness();
+    await startArena(h);
+    Object.assign(h.bridge.providers.old, { connected: false, ready: false, state: 'unavailable' });
+    h.bridge.callbacks.onProvidersChange(h.bridge.providers);
+    assert.equal(h.game.getArenaPaused(), true);
+    h.completeSearch(0, 'e2e4');
+    h.clock.tick(1000);
+    assert.equal(h.game.getCurrentFEN(), START);
+    assert.equal(h.searches.length, 1);
+    h.game.toggleArenaPause();
+    assert.equal(h.game.getArenaPaused(), true, 'a missing engine cannot be silently substituted');
+    assert.equal(h.searches.length, 1);
+});
+
+test('switching from arena to a human game cancels both late results and queued turns', async () => {
+    const h = createHarness();
+    await startArena(h);
+    h.completeSearch(0, 'e2e4');
+    const restarted = h.game.startGame({ mode: 'human', opponentEngine: 'new' });
+    h.finishNewGame();
+    await restarted;
+    h.clock.tick(1000);
+    h.completeSearch(0, 'e2e4');
+    assert.equal(h.game.getGameMode(), 'human');
+    assert.equal(h.game.getCurrentFEN(), START);
+    assert.equal(h.searches.length, 1);
+    assert.equal(h.game.makeMove('e2', 'e4'), true);
+    assert.equal(h.searches.at(-1).options.engine, 'new');
+});
+
+test('checkmate ends arena play without scheduling another engine', async () => {
+    const h = createHarness({ gameEndsAfter: 1 });
+    await startArena(h);
+    h.completeSearch(0, 'e2e4');
+    assert.equal(h.game.isGameOver(), true);
+    h.clock.tick(1000);
+    h.engineReady();
+    assert.equal(h.searches.length, 1);
+});
+
+test('time expiry ends arena play and ignores a late best move', async () => {
+    const h = createHarness();
+    await startArena(h);
+    h.ui.callbacks.onTimeOut('white');
+    assert.equal(h.game.isGameOver(), true);
+    h.completeSearch(0, 'e2e4');
+    h.clock.tick(1000);
+    assert.equal(h.game.getCurrentFEN(), START);
+    assert.equal(h.searches.length, 1);
 });

@@ -13,6 +13,12 @@
     let waitingForHint = false;
     let resettingEngine = false;
     let searchGeneration = 0;
+    let gameMode = 'human';
+    let opponentEngine = 'old';
+    let whiteEngine = 'old';
+    let blackEngine = 'new';
+    let arenaPaused = false;
+    let arenaTimer = null;
 
     // ======================== Инициализация ========================
     function init() {
@@ -21,6 +27,10 @@
         // Загружаем настройки
         const settings = window.Settings ? window.Settings.load() : {};
         playerColor = settings.playerColor || 'white';
+        gameMode = settings.gameMode === 'arena' ? 'arena' : 'human';
+        opponentEngine = normalizeEngine(settings.opponentEngine, 'old');
+        whiteEngine = normalizeEngine(settings.whiteEngine, 'old');
+        blackEngine = normalizeEngine(settings.blackEngine, 'new');
 
         // chess.js
         chess = new Chess();
@@ -55,7 +65,10 @@
                 onHint: hint,
                 onFlipBoard: flipBoard,
                 onSettingsChange: onSettingsChange,
-                onPromotion: onPromotionChoice
+                onPromotion: onPromotionChoice,
+                onStartGame: startGame,
+                onToggleArenaPause: toggleArenaPause,
+                onTimeOut: onTimeOut
             });
             window.UI.updateTurnDisplay('white');
         }
@@ -80,9 +93,14 @@
                 onBestMove: onEngineBestMove,
                 onInfo: onEngineInfo,
                 onConnectionChange: onConnectionChange,
-                onError: onEngineError
+                onError: onEngineError,
+                onProvidersChange: onProvidersChange,
+                onProviderFallback: onProviderFallback
             });
-            onConnectionChange(window.Bridge.getRemoteConnected(), window.Bridge.getConnectionState());
+            if (window.Bridge.getProviders) onProvidersChange(window.Bridge.getProviders());
+            else onConnectionChange(window.Bridge.getRemoteConnected(), window.Bridge.getConnectionState());
+            if (gameMode === 'arena' && !arenaAvailable()) pauseArena('Для матча нужны оба движка.');
+            updateModeDisplay();
             if (window.Bridge.getEngineReady()) onEngineReady();
         }
     }
@@ -91,7 +109,7 @@
 
     function onDragStart(source, piece, position, orientation) {
         // Запрет перетаскивания в неподходящих ситуациях
-        if (gameOver) return false;
+        if (gameOver || gameMode === 'arena') return false;
         if (waitingForEngine || waitingForHint) return false;
 
         // Только свои фигуры в свой ход
@@ -107,7 +125,7 @@
     }
 
     function onDrop(source, target) {
-        if (gameOver || waitingForEngine || waitingForHint || isEngineTurn()) return 'snapback';
+        if (gameOver || gameMode === 'arena' || waitingForEngine || waitingForHint || isEngineTurn()) return 'snapback';
         if (source === target) return 'snapback';
 
         // Проверяем, является ли это превращением пешки
@@ -141,7 +159,7 @@
     // ======================== Превращение пешки ========================
 
     function onPromotionChoice(pieceType) {
-        if (!pendingPromotion) return;
+        if (!pendingPromotion || gameOver || gameMode === 'arena') return;
 
         var move = chess.move({
             from: pendingPromotion.from,
@@ -191,24 +209,90 @@
     // ======================== Движок ========================
 
     function onEngineReady() {
+        if (gameMode === 'human') selectHumanEngine();
         if (window.UI) window.UI.setEngineStatus(true);
 
         if (initialized && !resettingEngine && !waitingForEngine && !waitingForHint &&
-                isEngineTurn() && !gameOver) {
+                !arenaPaused && !arenaTimer && isEngineTurn() && !gameOver) {
             makeEngineMove();
         }
     }
 
     function onConnectionChange(connected, state) {
+        if (window.Bridge.getProviders) {
+            if (window.UI) window.UI.setEngineStatus(window.Bridge.getEngineReady());
+            return;
+        }
         if (window.UI && window.UI.setConnectionStatus) {
             window.UI.setConnectionStatus(connected, state);
             window.UI.setEngineStatus(window.Bridge.getEngineReady());
         }
     }
 
+    function normalizeEngine(engine, fallback) {
+        return ['old', 'new', 'local'].indexOf(engine) !== -1 ? engine : fallback;
+    }
+
+    function arenaAvailable() {
+        if (!window.Bridge.getProviders) return false;
+        var providers = window.Bridge.getProviders();
+        return !!(providers.old && providers.old.connected && providers.old.ready &&
+            providers.new && providers.new.connected && providers.new.ready &&
+            whiteEngine !== blackEngine && whiteEngine !== 'local' && blackEngine !== 'local');
+    }
+
+    function updateModeDisplay() {
+        if (window.UI && window.UI.setGameMode) window.UI.setGameMode(gameMode, arenaPaused);
+    }
+
+    function setCurrentEngine(engine) {
+        if (window.Bridge.setActiveEngine) window.Bridge.setActiveEngine(engine);
+        if (window.UI && window.UI.setActiveEngine) window.UI.setActiveEngine(engine);
+    }
+
+    function selectHumanEngine() {
+        if (window.Bridge.getProviders && !window.Bridge.getEngineReady(opponentEngine)) {
+            var providers = window.Bridge.getProviders();
+            if (providers.old.ready) opponentEngine = 'old';
+            else if (providers.new.ready) opponentEngine = 'new';
+            else if (window.Bridge.getEngineReady('local')) opponentEngine = 'local';
+        }
+        setCurrentEngine(opponentEngine);
+        return opponentEngine;
+    }
+
+    function onProvidersChange(providers) {
+        if (window.UI && window.UI.updateProviders) window.UI.updateProviders(providers);
+        if (initialized && gameMode === 'human' && !waitingForEngine && !waitingForHint && !resettingEngine) {
+            selectHumanEngine();
+        }
+        if (initialized && gameMode === 'arena' && !arenaPaused && !resettingEngine && !gameOver && !arenaAvailable()) {
+            pauseArena('Матч приостановлен: один из движков недоступен.');
+        }
+    }
+
+    function onProviderFallback(from, to) {
+        if (gameMode === 'arena') {
+            pauseArena('Матч приостановлен: выбранный движок недоступен.');
+            return;
+        }
+        opponentEngine = to;
+        setCurrentEngine(to);
+        if (window.UI) {
+            var name = to === 'old' ? 'Старый движок Марика' : to === 'new' ? 'Новый движок Марика' : 'Резервный движок';
+            window.UI.showToast('Игра продолжится с движком: ' + name, 4000);
+        }
+    }
+
     function onEngineError(error) {
+        if (gameMode === 'arena') {
+            pauseArena('Матч приостановлен. Проверьте индикаторы движков и нажмите «Продолжить».');
+            console.error('Engine unavailable:', error);
+            return;
+        }
         waitingForEngine = false;
         waitingForHint = false;
+        cancelEngineSearch();
         if (window.UI) {
             window.UI.setEngineStatus(false);
             window.UI.showToast('Не удалось запустить движок. Попробуйте начать новую игру.', 5000);
@@ -217,6 +301,7 @@
     }
 
     function isEngineTurn() {
+        if (gameMode === 'arena') return !!chess;
         return chess && chess.turn() !== (playerColor === 'white' ? 'w' : 'b');
     }
 
@@ -245,6 +330,8 @@
     }
 
     function cancelEngineSearch() {
+        clearTimeout(arenaTimer);
+        arenaTimer = null;
         searchGeneration++;
         waitingForEngine = false;
         waitingForHint = false;
@@ -252,40 +339,56 @@
     }
 
     function makeEngineMove() {
-        if (gameOver || !isEngineTurn() || waitingForEngine) return;
+        if (gameOver || arenaPaused || !isEngineTurn() || waitingForEngine) return;
+        if (gameMode === 'arena' && !resettingEngine && !arenaAvailable()) {
+            pauseArena('Матч приостановлен: для игры нужны оба движка.');
+            return;
+        }
         waitingForEngine = true;
         if (resettingEngine) return;
 
         var fen = chess.fen();
         var generation = ++searchGeneration;
+        var engine = gameMode === 'arena' ? (chess.turn() === 'w' ? whiteEngine : blackEngine) : opponentEngine;
+        if (gameMode === 'human' && !window.Bridge.getEngineReady(engine) && window.Bridge.getProviders) {
+            var providers = window.Bridge.getProviders();
+            var available = providers.old.ready ? 'old' : providers.new.ready ? 'new' : 'local';
+            if (available !== engine) onProviderFallback(engine, available);
+            engine = available;
+        }
+        setCurrentEngine(engine);
         window.Bridge.setPosition(getEngineFEN(fen));
 
         // Передаём оставшееся время для оптимального тайм-менеджмента Stockfish
         var whiteTimeMs = getTimerMs('white');
         var blackTimeMs = getTimerMs('black');
 
-        window.Bridge.startSearch({
+        var started = window.Bridge.startSearch({
+            engine: engine,
+            allowFallback: gameMode !== 'arena',
+            movetime: gameMode === 'arena' ? 500 : undefined,
             wtime: whiteTimeMs,
             btime: blackTimeMs,
             validateMove: function(moveStr) { return validateEngineMove(fen, moveStr); },
             onBestMove: function(moveStr, ponder) {
-                if (generation !== searchGeneration || chess.fen() !== fen || !waitingForEngine) return;
+                if (generation !== searchGeneration || chess.fen() !== fen || !waitingForEngine || arenaPaused) return;
                 onEngineBestMove(moveStr, ponder);
             }
         });
+        if (started === false && generation === searchGeneration) onEngineError('Движок занят.');
     }
 
     function getTimerMs(color) {
         if (window.UI && window.UI.getWhiteTime && window.UI.getBlackTime) {
             var seconds = color === 'white' ? window.UI.getWhiteTime() : window.UI.getBlackTime();
-            return seconds * 1000;
+            return Math.max(0, Math.floor(seconds * 1000));
         }
         return 900000; // 15 min default
     }
 
     function onEngineBestMove(moveStr, ponder) {
         waitingForEngine = false;
-        if (gameOver || !moveStr || moveStr === '(none)') return;
+        if (gameOver || arenaPaused || !moveStr || moveStr === '(none)') return;
 
         var from = moveStr.substring(0, 2);
         var to = moveStr.substring(2, 4);
@@ -316,12 +419,19 @@
         updateStatus();
 
         // Проверяем окончание
-        checkGameOver();
+        if (!checkGameOver() && gameMode === 'arena' && !arenaPaused) {
+            var generation = searchGeneration;
+            arenaTimer = setTimeout(function() {
+                arenaTimer = null;
+                if (generation === searchGeneration && !gameOver && !arenaPaused) makeEngineMove();
+            }, 300);
+        }
     }
 
     function onEngineInfo(info) {
         if (window.UI) {
             var evalValue = info.mate ? (info.mate * 10000) : info.score;
+            if (info.perspective === 'sideToMove' && chess.turn() === 'b') evalValue = -evalValue;
             window.UI.updateEngineInfo(
                 info.depth,
                 info.nodes,
@@ -342,65 +452,31 @@
 
     function checkGameOver() {
         if (gameOver) return true;
-
+        var result = '1/2-1/2';
+        var message;
         if (chess.in_checkmate()) {
-            gameOver = true;
             var winner = chess.turn() === 'w' ? 'Чёрные' : 'Белые';
-            var result = chess.turn() === 'w' ? '0-1' : '1-0';
-            if (window.MoveHistory) window.MoveHistory.setResult(result);
-            if (window.UI) {
-                window.UI.setGameOver(true);
-                window.UI.showGameOverMessage('Мат! ' + winner + ' победили!');
-            }
-            if (window.Sound) window.Sound.play('gameEnd');
-            return true;
-        }
+            result = chess.turn() === 'w' ? '0-1' : '1-0';
+            message = 'Мат! ' + winner + ' победили!';
+        } else if (chess.in_stalemate()) {
+            message = 'Пат! Ничья.';
+        } else if (chess.in_threefold_repetition()) {
+            message = 'Троекратное повторение! Ничья.';
+        } else if (chess.insufficient_material()) {
+            message = 'Недостаточно фигур! Ничья.';
+        } else if (chess.in_draw()) {
+            message = 'Ничья по правилу 50 ходов.';
+        } else return false;
 
-        if (chess.in_stalemate()) {
-            gameOver = true;
-            if (window.MoveHistory) window.MoveHistory.setResult('1/2-1/2');
-            if (window.UI) {
-                window.UI.setGameOver(true);
-                window.UI.showGameOverMessage('Пат! Ничья.');
-            }
-            if (window.Sound) window.Sound.play('gameEnd');
-            return true;
+        gameOver = true;
+        cancelEngineSearch();
+        if (window.MoveHistory) window.MoveHistory.setResult(result);
+        if (window.UI) {
+            window.UI.setGameOver(true);
+            window.UI.showGameOverMessage(message);
         }
-
-        if (chess.in_threefold_repetition()) {
-            gameOver = true;
-            if (window.MoveHistory) window.MoveHistory.setResult('1/2-1/2');
-            if (window.UI) {
-                window.UI.setGameOver(true);
-                window.UI.showGameOverMessage('Троекратное повторение! Ничья.');
-            }
-            if (window.Sound) window.Sound.play('gameEnd');
-            return true;
-        }
-
-        if (chess.insufficient_material()) {
-            gameOver = true;
-            if (window.MoveHistory) window.MoveHistory.setResult('1/2-1/2');
-            if (window.UI) {
-                window.UI.setGameOver(true);
-                window.UI.showGameOverMessage('Недостаточно фигур! Ничья.');
-            }
-            if (window.Sound) window.Sound.play('gameEnd');
-            return true;
-        }
-
-        if (chess.in_draw()) {
-            gameOver = true;
-            if (window.MoveHistory) window.MoveHistory.setResult('1/2-1/2');
-            if (window.UI) {
-                window.UI.setGameOver(true);
-                window.UI.showGameOverMessage('Ничья по правилу 50 ходов.');
-            }
-            if (window.Sound) window.Sound.play('gameEnd');
-            return true;
-        }
-
-        return false;
+        if (window.Sound) window.Sound.play('gameEnd');
+        return true;
     }
 
     // ======================== Звуки ========================
@@ -428,12 +504,14 @@
         cancelEngineSearch();
         var generation = searchGeneration;
         resettingEngine = true;
+        arenaPaused = false;
         chess = new Chess();
         moveList = [];
         gameOver = false;
         waitingForEngine = false;
         pendingPromotion = null;
 
+        updateModeDisplay();
         board.orientation(playerColor);
         board.position('start');
 
@@ -445,13 +523,19 @@
         }
         if (window.Sound) window.Sound.play('gameStart');
 
-        waitingForEngine = playerColor === 'black';
+        waitingForEngine = gameMode === 'arena' || playerColor === 'black';
         // Каждая новая партия заново проверяет доступность удалённого движка.
         return Promise.resolve(window.Bridge.newGame()).then(function() {
             if (generation !== searchGeneration) return;
             resettingEngine = false;
             waitingForEngine = false;
             if (!window.Bridge.getEngineReady()) return;
+            if (gameMode === 'arena' && !arenaAvailable()) {
+                pauseArena('Для матча нужны оба движка. Выберите игру против одного движка или повторите подключение.');
+                return;
+            }
+            if (gameMode === 'arena') setCurrentEngine(whiteEngine);
+            else selectHumanEngine();
             if (isEngineTurn() && !gameOver) makeEngineMove();
         }).catch(function(error) {
             if (generation !== searchGeneration) return;
@@ -461,7 +545,7 @@
     }
 
     function undoMove() {
-        if (gameOver || waitingForEngine || waitingForHint || resettingEngine) return false;
+        if (gameMode === 'arena' || gameOver || waitingForEngine || waitingForHint || resettingEngine) return false;
         // Первый ход движка за белых не образует пару с ходом игрока.
         if (chess.history().length < 2) return false;
 
@@ -486,7 +570,7 @@
     }
 
     function hint() {
-        if (waitingForEngine || waitingForHint || resettingEngine || gameOver || isEngineTurn()) return;
+        if (gameMode === 'arena' || waitingForEngine || waitingForHint || resettingEngine || gameOver || isEngineTurn()) return;
 
         var fen = chess.fen();
         var generation = ++searchGeneration;
@@ -494,6 +578,8 @@
         window.Bridge.setPosition(getEngineFEN(fen));
         window.Bridge.startSearch({
             movetime: 1000,
+            engine: opponentEngine,
+            allowFallback: true,
             validateMove: function(moveStr) { return validateEngineMove(fen, moveStr); },
             onBestMove: function(moveStr) {
                 if (generation !== searchGeneration || chess.fen() !== fen || gameOver) return;
@@ -536,6 +622,7 @@
     }
 
     function setPositionFromHistory(fen) {
+        if (gameMode === 'arena') pauseArena();
         cancelEngineSearch();
         resettingEngine = false;
         pendingPromotion = null;
@@ -548,12 +635,91 @@
         return chess.fen();
     }
 
+    function startGame(config) {
+        config = config || {};
+        var mode = config.mode === 'arena' ? 'arena' : 'human';
+        var white = normalizeEngine(config.whiteEngine, 'old');
+        var black = normalizeEngine(config.blackEngine, 'new');
+        if (mode === 'arena') {
+            var providers = window.Bridge.getProviders ? window.Bridge.getProviders() : {};
+            if (white === black || white === 'local' || black === 'local') {
+                if (window.UI) window.UI.showToast('Для матча выберите два разных движка.', 4000);
+                return false;
+            }
+            if (!providers.old || !providers.old.ready || !providers.old.connected ||
+                    !providers.new || !providers.new.ready || !providers.new.connected) {
+                if (window.UI) window.UI.showToast('Для матча нужны оба движка с зелёными индикаторами.', 4000);
+                return false;
+            }
+        }
+        gameMode = mode;
+        opponentEngine = normalizeEngine(config.opponentEngine, 'old');
+        whiteEngine = white;
+        blackEngine = black;
+        if (window.Settings && window.Settings.set) {
+            window.Settings.set('gameMode', gameMode);
+            window.Settings.set('opponentEngine', opponentEngine);
+            window.Settings.set('whiteEngine', whiteEngine);
+            window.Settings.set('blackEngine', blackEngine);
+        }
+        if (window.BurchessSettings) {
+            Object.assign(window.BurchessSettings, { gameMode: gameMode, opponentEngine: opponentEngine,
+                whiteEngine: whiteEngine, blackEngine: blackEngine });
+        }
+        return newGame();
+    }
+
+    function pauseArena(message) {
+        if (gameMode !== 'arena' || arenaPaused || gameOver) return false;
+        arenaPaused = true;
+        cancelEngineSearch();
+        if (window.UI && window.UI.pauseTimers) window.UI.pauseTimers();
+        updateModeDisplay();
+        if (message && window.UI) window.UI.showToast(message, 5000);
+        return true;
+    }
+
+    function toggleArenaPause() {
+        if (gameMode !== 'arena' || gameOver || resettingEngine) return false;
+        if (!arenaPaused) return pauseArena();
+        cancelEngineSearch();
+        var generation = searchGeneration;
+        resettingEngine = true;
+        return Promise.resolve(window.Bridge.newGame()).then(function() {
+            if (generation !== searchGeneration) return false;
+            resettingEngine = false;
+            if (!arenaAvailable()) {
+                if (window.UI) window.UI.showToast('Оба движка должны быть подключены для продолжения матча.', 4000);
+                return false;
+            }
+            arenaPaused = false;
+            if (window.UI && window.UI.resumeTimers) window.UI.resumeTimers();
+            updateModeDisplay();
+            makeEngineMove();
+            return true;
+        }).catch(function(error) {
+            if (generation !== searchGeneration) return false;
+            resettingEngine = false;
+            onEngineError(error);
+            return false;
+        });
+    }
+
+    function onTimeOut(color) {
+        if (gameOver) return;
+        gameOver = true;
+        cancelEngineSearch();
+        if (window.MoveHistory) window.MoveHistory.setResult(color === 'white' ? '0-1' : '1-0');
+        if (window.UI) window.UI.setGameOver(true);
+        if (window.Sound) window.Sound.play('gameEnd');
+    }
+
     // ======================== Публичный API ========================
 
     window.Game = {
         init: init,
         makeMove: function(from, to, promotion) {
-            if (gameOver || waitingForEngine || waitingForHint || isEngineTurn()) return false;
+            if (gameOver || gameMode === 'arena' || waitingForEngine || waitingForHint || isEngineTurn()) return false;
             var move = chess.move({ from: from, to: to, promotion: promotion || 'q' });
             if (move) {
                 afterPlayerMove(move);
@@ -562,6 +728,10 @@
             return !!move;
         },
         newGame: newGame,
+        startGame: startGame,
+        toggleArenaPause: toggleArenaPause,
+        getGameMode: function() { return gameMode; },
+        getArenaPaused: function() { return arenaPaused; },
         setPositionFromHistory: setPositionFromHistory,
         getCurrentFEN: getCurrentFEN,
         undo: undoMove,

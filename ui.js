@@ -23,10 +23,17 @@
             onHint: null,
             onFlipBoard: null,
             onSettingsChange: null,
-            onPromotion: null
+            onPromotion: null,
+            onStartGame: null,
+            onToggleArenaPause: null,
+            onTimeOut: null
         },
         currentTurn: 'white',
         connectionState: 'connecting',
+        providers: null,
+        activeEngine: 'old',
+        gameMode: 'human',
+        arenaPaused: false,
         engineActive: false,
         gameOver: false,
         toastTimeout: null
@@ -40,6 +47,8 @@
         updateTurnDisplay('white');
         updateTimersDisplay();
         setupModalClosers();
+        if (UI.providers) updateProviders(UI.providers);
+        else updateSetupControls();
     }
 
     function cacheElements() {
@@ -82,7 +91,15 @@
         e.promotionBtns = document.querySelectorAll('.promo-btn');
         e.gameOverNewGame = document.getElementById('game-over-new-game');
         e.engineStatus = document.getElementById('engine-status');
-        e.connectionStatus = document.getElementById('connection-status');
+        e.gameMode = document.getElementById('game-mode');
+        e.opponentEngine = document.getElementById('opponent-engine');
+        e.whiteEngine = document.getElementById('white-engine');
+        e.blackEngine = document.getElementById('black-engine');
+        e.humanEngineField = document.getElementById('human-engine-field');
+        e.arenaEngineFields = document.getElementById('arena-engine-fields');
+        e.startGameBtn = document.getElementById('start-game-btn');
+        e.arenaPauseBtn = document.getElementById('arena-pause-btn');
+        e.setupMessage = document.getElementById('game-setup-message');
     }
 
     function attachEventListeners() {
@@ -97,6 +114,26 @@
         if (e.clearHistoryBtn) e.clearHistoryBtn.addEventListener('click', clearMoveHistory);
         if (e.saveSettings) e.saveSettings.addEventListener('click', saveSettings);
         if (e.resetDefaults) e.resetDefaults.addEventListener('click', resetSettings);
+        if (e.gameMode) e.gameMode.addEventListener('change', updateSetupControls);
+        if (e.opponentEngine) e.opponentEngine.addEventListener('change', updateSetupControls);
+        if (e.whiteEngine) e.whiteEngine.addEventListener('change', function() {
+            if (e.blackEngine && e.whiteEngine.value === e.blackEngine.value) {
+                e.blackEngine.value = e.whiteEngine.value === 'old' ? 'new' : 'old';
+            }
+            updateSetupControls();
+        });
+        if (e.blackEngine) e.blackEngine.addEventListener('change', function() {
+            if (e.whiteEngine && e.blackEngine.value === e.whiteEngine.value) {
+                e.whiteEngine.value = e.blackEngine.value === 'old' ? 'new' : 'old';
+            }
+            updateSetupControls();
+        });
+        if (e.startGameBtn) e.startGameBtn.addEventListener('click', function() {
+            if (!e.startGameBtn.disabled && UI.callbacks.onStartGame) UI.callbacks.onStartGame(getGameSetup());
+        });
+        if (e.arenaPauseBtn) e.arenaPauseBtn.addEventListener('click', function() {
+            if (UI.callbacks.onToggleArenaPause) UI.callbacks.onToggleArenaPause();
+        });
         if (e.gameOverNewGame) e.gameOverNewGame.addEventListener('click', function() {
             closeModal('gameOver');
             if (UI.callbacks.onNewGame) UI.callbacks.onNewGame();
@@ -150,7 +187,11 @@
             gameTime: 15,
             soundEnabled: true,
             showCoordinates: true,
-            theme: 'light'
+            theme: 'light',
+            gameMode: 'human',
+            opponentEngine: 'old',
+            whiteEngine: 'old',
+            blackEngine: 'new'
         };
         var settings;
         try {
@@ -169,6 +210,10 @@
         if (UI.elements.gameTime) UI.elements.gameTime.value = settings.gameTime || 15;
         if (UI.elements.soundToggle) UI.elements.soundToggle.checked = settings.soundEnabled;
         if (UI.elements.showCoordinates) UI.elements.showCoordinates.checked = settings.showCoordinates;
+        if (UI.elements.gameMode) UI.elements.gameMode.value = settings.gameMode === 'arena' ? 'arena' : 'human';
+        if (UI.elements.opponentEngine) UI.elements.opponentEngine.value = settings.opponentEngine === 'new' ? 'new' : 'old';
+        if (UI.elements.whiteEngine) UI.elements.whiteEngine.value = settings.whiteEngine === 'new' ? 'new' : 'old';
+        if (UI.elements.blackEngine) UI.elements.blackEngine.value = settings.blackEngine === 'old' ? 'old' : 'new';
 
         UI.isDarkTheme = (settings.theme === 'dark');
         if (UI.isDarkTheme) document.documentElement.setAttribute('data-theme', 'dark');
@@ -178,14 +223,14 @@
     }
 
     function saveSettings() {
-        var settings = {
+        var settings = Object.assign({}, window.BurchessSettings || {}, {
             playerColor: UI.elements.playerColor ? UI.elements.playerColor.value : 'white',
             gameTime: UI.elements.gameTime ? parseInt(UI.elements.gameTime.value) : 15,
             soundEnabled: UI.elements.soundToggle ? UI.elements.soundToggle.checked : true,
             showCoordinates: UI.elements.showCoordinates ? UI.elements.showCoordinates.checked : true,
             theme: UI.isDarkTheme ? 'dark' : 'light'
-        };
-        localStorage.setItem('burchess_settings', JSON.stringify(settings));
+        });
+        try { localStorage.setItem('burchess_settings', JSON.stringify(settings)); } catch (error) {}
         window.BurchessSettings = settings;
         closeModal('settings');
         showToast('Настройки сохранены', 2000);
@@ -242,8 +287,40 @@
     });
 
     // ======================== Таймеры ========================
+    var activeTimerColor = null;
+    var timerUpdatedAt = null;
+
+    function timerNow() {
+        return typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now();
+    }
+
+    function remainingTime(color) {
+        var seconds = color === 'white' ? UI.timers.whiteTime : UI.timers.blackTime;
+        if (UI.timers.active && activeTimerColor === color && timerUpdatedAt !== null) {
+            seconds -= Math.max(0, timerNow() - timerUpdatedAt) / 1000;
+        }
+        return Math.max(0, seconds);
+    }
+
+    function settleTimer(reportExpiry) {
+        if (!UI.timers.active || activeTimerColor === null || timerUpdatedAt === null) return;
+        var color = activeTimerColor;
+        var now = timerNow();
+        var key = color === 'white' ? 'whiteTime' : 'blackTime';
+        UI.timers[key] = Math.max(0, UI.timers[key] - Math.max(0, now - timerUpdatedAt) / 1000);
+        timerUpdatedAt = now;
+        if (reportExpiry !== false && UI.timers[key] <= 0) onTimeOut(color);
+    }
+
+    function clearTimerIntervals() {
+        if (UI.timers.white !== null) clearInterval(UI.timers.white);
+        if (UI.timers.black !== null) clearInterval(UI.timers.black);
+        UI.timers.white = null;
+        UI.timers.black = null;
+    }
+
     function startTimers() {
-        stopTimers();
+        stopTimers(false);
         UI.timers.active = true;
         var gameTime = (window.BurchessSettings && window.BurchessSettings.gameTime) || 15;
         UI.timers.whiteTime = gameTime * 60;
@@ -252,62 +329,70 @@
         startActiveTimer();
     }
 
-    function stopTimers() {
+    function stopTimers(reportExpiry) {
+        settleTimer(reportExpiry);
         UI.timers.active = false;
-        if (UI.timers.white) clearInterval(UI.timers.white);
-        if (UI.timers.black) clearInterval(UI.timers.black);
-        UI.timers.white = null;
-        UI.timers.black = null;
+        clearTimerIntervals();
+        activeTimerColor = null;
+        timerUpdatedAt = null;
+        updateTimersDisplay();
+    }
+
+    function pauseTimers() {
+        stopTimers();
+    }
+
+    function resumeTimers() {
+        if (UI.gameOver) return;
+        UI.timers.active = true;
+        startActiveTimer();
     }
 
     function startActiveTimer() {
         if (!UI.timers.active || UI.gameOver) return;
-        stopTimers();
-        UI.timers.active = true;
+        // A side can move again before the next display tick. Settle its exact
+        // elapsed time now, retaining fractions of a second across every turn.
+        settleTimer();
+        if (!UI.timers.active || UI.gameOver) return;
+        clearTimerIntervals();
         var color = UI.currentTurn;
+        activeTimerColor = color;
+        timerUpdatedAt = timerNow();
+        updateTimersDisplay();
         var interval = setInterval(function() {
             if (!UI.timers.active || UI.gameOver) {
                 clearInterval(interval);
                 return;
             }
-            if (color === 'white') {
-                if (UI.timers.whiteTime <= 0) {
-                    onTimeOut('white');
-                    clearInterval(interval);
-                    return;
-                }
-                UI.timers.whiteTime--;
-            } else {
-                if (UI.timers.blackTime <= 0) {
-                    onTimeOut('black');
-                    clearInterval(interval);
-                    return;
-                }
-                UI.timers.blackTime--;
-            }
+            settleTimer();
             updateTimersDisplay();
-        }, 1000);
+        }, 250);
         if (color === 'white') UI.timers.white = interval;
         else UI.timers.black = interval;
     }
 
     function updateTimersDisplay() {
-        if (UI.elements.whiteTimer) UI.elements.whiteTimer.textContent = formatTime(UI.timers.whiteTime);
-        if (UI.elements.blackTimer) UI.elements.blackTimer.textContent = formatTime(UI.timers.blackTime);
+        if (UI.elements.whiteTimer) UI.elements.whiteTimer.textContent = formatTime(remainingTime('white'));
+        if (UI.elements.blackTimer) UI.elements.blackTimer.textContent = formatTime(remainingTime('black'));
     }
 
     function formatTime(seconds) {
+        // Round the display to milliseconds before rounding up to full seconds,
+        // so floating point residue after rapid turns cannot show an extra second.
+        seconds = Math.ceil(Math.max(0, Math.round(seconds * 1000) / 1000));
         var mins = Math.floor(seconds / 60);
         var secs = seconds % 60;
         return (mins < 10 ? '0' : '') + mins + ':' + (secs < 10 ? '0' : '') + secs;
     }
 
     function onTimeOut(color) {
+        if (UI.gameOver) return;
         UI.gameOver = true;
         UI.timers.active = false;
         stopTimers();
         var winner = color === 'white' ? 'Чёрные' : 'Белые';
         showGameOverMessage(winner + ' выиграли по времени!');
+        if (UI.callbacks.onTimeOut) UI.callbacks.onTimeOut(color);
     }
 
     // ======================== Статус ========================
@@ -400,37 +485,122 @@
         var element = UI.elements.engineStatus || document.getElementById('engine-status');
         var label = element ? element.querySelector('.engine-status-text') : null;
         if (!label) return;
-        if (UI.connectionState === 'connecting') {
-            label.textContent = 'Подключение движка...';
-        } else if (UI.connectionState === 'error') {
-            label.textContent = 'Движок недоступен';
-        } else {
-            var name = UI.connectionState === 'remote' ? 'супер движок Марика' : 'Локальный движок';
-            label.textContent = name + (UI.engineActive ? ' активен' : ' загружается...');
+        var name = engineName(UI.activeEngine);
+        label.textContent = name + (UI.engineActive ? ' активен' : ' загружается...');
+    }
+
+    function engineName(id) {
+        return id === 'old' ? 'Старый движок Марика' : id === 'new' ? 'Новый движок Марика' : 'Резервный движок';
+    }
+
+    function updateProviders(providers) {
+        UI.providers = providers;
+        ['old', 'new'].forEach(function(id) {
+            var provider = providers && providers[id];
+            var connected = !!(provider && provider.connected);
+            var connecting = !!(provider && provider.state === 'connecting');
+            var description = engineName(id) + ': ' + (connected ? 'подключён' : connecting ? 'подключение' : 'недоступен');
+            var element = document.getElementById('connection-status-' + id);
+            if (element) {
+                element.classList.toggle('connected', connected);
+                element.classList.toggle('connecting', connecting);
+                element.setAttribute('title', description);
+                element.setAttribute('aria-label', description);
+            }
+            var text = document.getElementById('connection-status-' + id + '-text');
+            if (text) text.textContent = description;
+        });
+        updateSetupControls();
+    }
+
+    function providerReady(id) {
+        var provider = UI.providers && UI.providers[id];
+        return !!(provider && provider.connected && provider.ready);
+    }
+
+    function updateSetupControls() {
+        var e = UI.elements;
+        if (!e.gameMode) return;
+        var oldReady = providerReady('old');
+        var newReady = providerReady('new');
+        var connecting = !!(UI.providers && ['old', 'new'].some(function(id) {
+            return UI.providers[id] && UI.providers[id].state === 'connecting';
+        }));
+        if (e.opponentEngine) {
+            Array.from(e.opponentEngine.options).forEach(function(option) {
+                if (option.value === 'old' || option.value === 'new') option.disabled = !providerReady(option.value);
+            });
+            var localOption = e.opponentEngine.querySelector('option[value="local"]');
+            if (!oldReady && !newReady && !localOption) {
+                localOption = document.createElement('option');
+                localOption.value = 'local';
+                localOption.textContent = engineName('local');
+                e.opponentEngine.appendChild(localOption);
+            }
+            if ((oldReady || newReady) && localOption) localOption.remove();
+            if (!providerReady(e.opponentEngine.value)) {
+                e.opponentEngine.value = oldReady ? 'old' : newReady ? 'new' : 'local';
+            }
         }
+        [e.whiteEngine, e.blackEngine].forEach(function(select) {
+            if (!select) return;
+            Array.from(select.options).forEach(function(option) { option.disabled = !providerReady(option.value); });
+        });
+        var arena = e.gameMode.value === 'arena';
+        if (e.humanEngineField) e.humanEngineField.hidden = arena;
+        if (e.arenaEngineFields) e.arenaEngineFields.hidden = !arena;
+        if (e.startGameBtn) e.startGameBtn.disabled = arena && !(oldReady && newReady);
+        if (e.arenaPauseBtn) {
+            e.arenaPauseBtn.hidden = UI.gameMode !== 'arena';
+            e.arenaPauseBtn.textContent = UI.arenaPaused ? '▶ Продолжить' : '⏸ Пауза';
+            e.arenaPauseBtn.disabled = UI.gameOver;
+        }
+        if (e.setupMessage) {
+            e.setupMessage.textContent = arena
+                ? oldReady && newReady ? 'Выберите цвета движков и начните партию.'
+                    : UI.gameMode === 'arena' && UI.arenaPaused ? 'Партия на паузе. Нажмите «Продолжить», чтобы проверить оба подключения.'
+                    : 'Для партии двух движков нужны оба подключения.'
+                : oldReady && newReady ? 'Оба движка доступны. Выберите соперника и начните новую партию.'
+                : oldReady || newReady ? 'Доступен один движок Марика. Соперник выбран автоматически.'
+                : connecting ? 'Проверка доступности движков...' : 'Оба подключения недоступны. Можно играть с резервным движком.';
+        }
+    }
+
+    function getGameSetup() {
+        var e = UI.elements;
+        return {
+            mode: e.gameMode ? e.gameMode.value : 'human',
+            opponentEngine: e.opponentEngine ? e.opponentEngine.value : 'old',
+            whiteEngine: e.whiteEngine ? e.whiteEngine.value : 'old',
+            blackEngine: e.blackEngine ? e.blackEngine.value : 'new'
+        };
+    }
+
+    function setActiveEngine(id) {
+        UI.activeEngine = id;
+        updateEngineStatusText();
+    }
+
+    function setGameMode(mode, paused) {
+        UI.gameMode = mode === 'arena' ? 'arena' : 'human';
+        UI.arenaPaused = !!paused;
+        if (UI.elements.gameMode) UI.elements.gameMode.value = UI.gameMode;
+        if (UI.elements.undoBtn) UI.elements.undoBtn.disabled = UI.gameMode === 'arena';
+        if (UI.elements.hintBtn) UI.elements.hintBtn.disabled = UI.gameMode === 'arena';
+        updateSetupControls();
     }
 
     function setConnectionStatus(connected, state) {
         UI.connectionState = connected ? 'remote' : (state || 'local');
-        var element = UI.elements.connectionStatus || document.getElementById('connection-status');
-        if (element) {
-            var description = connected ? 'Соединение с «супер движок Марика» установлено. Вы играете с удалённым движком.' :
-                UI.connectionState === 'connecting' ? 'Проверка соединения с «супер движок Марика»' :
-                UI.connectionState === 'error' ? 'Движок недоступен' :
-                'супер движок Марика недоступен. Используется локальный движок.';
-            element.classList.toggle('connected', !!connected);
-            element.classList.toggle('connecting', UI.connectionState === 'connecting');
-            element.setAttribute('title', description);
-            element.setAttribute('aria-label', description);
-            var text = document.getElementById('connection-status-text');
-            if (text) text.textContent = description;
-        }
-        updateEngineStatusText();
+        var providers = Object.assign({}, UI.providers || {});
+        providers.old = { connected: !!connected, ready: !!connected, state: state === 'connecting' ? 'connecting' : connected ? 'ready' : 'unavailable' };
+        updateProviders(providers);
     }
 
     function setGameOver(over) {
         UI.gameOver = over;
         if (over) stopTimers();
+        updateSetupControls();
     }
 
     function openPromotionModal() {
@@ -447,17 +617,23 @@
         showToast: showToast,
         setEngineStatus: setEngineStatus,
         setConnectionStatus: setConnectionStatus,
+        updateProviders: updateProviders,
+        setActiveEngine: setActiveEngine,
+        setGameMode: setGameMode,
+        getGameSetup: getGameSetup,
         setGameOver: setGameOver,
         openPromotionModal: openPromotionModal,
         startTimers: startTimers,
         stopTimers: stopTimers,
+        pauseTimers: pauseTimers,
+        resumeTimers: resumeTimers,
         setCallbacks: function(callbacks) {
             Object.assign(UI.callbacks, callbacks);
         },
         getSettings: function() { return window.BurchessSettings; },
         refreshBoard: function() {},
         // Геттеры для таймеров (используются в game.js для передачи времени Stockfish)
-        getWhiteTime: function() { return UI.timers.whiteTime; },
-        getBlackTime: function() { return UI.timers.blackTime; }
+        getWhiteTime: function() { return remainingTime('white'); },
+        getBlackTime: function() { return remainingTime('black'); }
     };
 })();
