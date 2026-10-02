@@ -26,6 +26,8 @@
             onPromotion: null
         },
         currentTurn: 'white',
+        connectionState: 'connecting',
+        engineActive: false,
         gameOver: false,
         toastTimeout: null
     };
@@ -80,6 +82,7 @@
         e.promotionBtns = document.querySelectorAll('.promo-btn');
         e.gameOverNewGame = document.getElementById('game-over-new-game');
         e.engineStatus = document.getElementById('engine-status');
+        e.connectionStatus = document.getElementById('connection-status');
     }
 
     function attachEventListeners() {
@@ -385,10 +388,44 @@
     }
 
     function setEngineStatus(active) {
+        UI.engineActive = active;
         var led = UI.elements.engineStatus ? UI.elements.engineStatus.querySelector('.status-led') : null;
         if (led) {
             led.style.backgroundColor = active ? '#2ecc71' : '#e74c3c';
         }
+        updateEngineStatusText();
+    }
+
+    function updateEngineStatusText() {
+        var element = UI.elements.engineStatus || document.getElementById('engine-status');
+        var label = element ? element.querySelector('.engine-status-text') : null;
+        if (!label) return;
+        if (UI.connectionState === 'connecting') {
+            label.textContent = 'Подключение движка...';
+        } else if (UI.connectionState === 'error') {
+            label.textContent = 'Движок недоступен';
+        } else {
+            var name = UI.connectionState === 'remote' ? 'chess-api.com' : 'Локальный движок';
+            label.textContent = name + (UI.engineActive ? ' активен' : ' загружается...');
+        }
+    }
+
+    function setConnectionStatus(connected, state) {
+        UI.connectionState = connected ? 'remote' : (state || 'local');
+        var element = UI.elements.connectionStatus || document.getElementById('connection-status');
+        if (element) {
+            var description = connected ? 'Соединение с chess-api.com установлено. Вы играете с удалённым движком.' :
+                UI.connectionState === 'connecting' ? 'Проверка соединения с chess-api.com' :
+                UI.connectionState === 'error' ? 'Движок недоступен' :
+                'chess-api.com недоступен. Используется локальный движок.';
+            element.classList.toggle('connected', !!connected);
+            element.classList.toggle('connecting', UI.connectionState === 'connecting');
+            element.setAttribute('title', description);
+            element.setAttribute('aria-label', description);
+            var text = document.getElementById('connection-status-text');
+            if (text) text.textContent = description;
+        }
+        updateEngineStatusText();
     }
 
     function setGameOver(over) {
@@ -409,6 +446,7 @@
         showGameOverMessage: showGameOverMessage,
         showToast: showToast,
         setEngineStatus: setEngineStatus,
+        setConnectionStatus: setConnectionStatus,
         setGameOver: setGameOver,
         openPromotionModal: openPromotionModal,
         startTimers: startTimers,

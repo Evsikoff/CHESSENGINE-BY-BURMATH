@@ -10,6 +10,9 @@
     let initialized = false;
     let moveList = [];          // UCI-ходы для передачи движку
     let pendingPromotion = null;
+    let waitingForHint = false;
+    let resettingEngine = false;
+    let searchGeneration = 0;
 
     // ======================== Инициализация ========================
     function init() {
@@ -57,19 +60,6 @@
             window.UI.updateTurnDisplay('white');
         }
 
-        // Инициализация движка (Bridge.init() уже вызван из загрузочного экрана)
-        if (window.Bridge) {
-            window.Bridge.setCallbacks({
-                onReady: onEngineReady,
-                onBestMove: onEngineBestMove,
-                onInfo: onEngineInfo
-            });
-            // Если движок уже готов к этому моменту
-            if (window.Bridge.getEngineReady()) {
-                onEngineReady();
-            }
-        }
-
         // Инициализация истории
         if (window.MoveHistory) {
             window.MoveHistory.init(chess.fen());
@@ -83,9 +73,17 @@
 
         initialized = true;
 
-        // Если игрок за чёрных — движок делает первый ход
-        if (playerColor === 'black') {
-            waitingForEngine = true;
+        // Все части игры готовы до первого хода, в том числе при игре за чёрных.
+        if (window.Bridge) {
+            window.Bridge.setCallbacks({
+                onReady: onEngineReady,
+                onBestMove: onEngineBestMove,
+                onInfo: onEngineInfo,
+                onConnectionChange: onConnectionChange,
+                onError: onEngineError
+            });
+            onConnectionChange(window.Bridge.getRemoteConnected(), window.Bridge.getConnectionState());
+            if (window.Bridge.getEngineReady()) onEngineReady();
         }
     }
 
@@ -94,7 +92,7 @@
     function onDragStart(source, piece, position, orientation) {
         // Запрет перетаскивания в неподходящих ситуациях
         if (gameOver) return false;
-        if (waitingForEngine) return false;
+        if (waitingForEngine || waitingForHint) return false;
 
         // Только свои фигуры в свой ход
         if (chess.turn() === 'w' && piece.search(/^b/) !== -1) return false;
@@ -109,6 +107,7 @@
     }
 
     function onDrop(source, target) {
+        if (gameOver || waitingForEngine || waitingForHint || isEngineTurn()) return 'snapback';
         if (source === target) return 'snapback';
 
         // Проверяем, является ли это превращением пешки
@@ -192,21 +191,74 @@
     // ======================== Движок ========================
 
     function onEngineReady() {
-        console.log('Stockfish ready');
         if (window.UI) window.UI.setEngineStatus(true);
 
-        // Если игрок за чёрных, движок ходит первым
-        if (playerColor === 'black' && chess.turn() === 'w' && !gameOver) {
+        if (initialized && !resettingEngine && !waitingForEngine && !waitingForHint &&
+                isEngineTurn() && !gameOver) {
             makeEngineMove();
         }
     }
 
+    function onConnectionChange(connected, state) {
+        if (window.UI && window.UI.setConnectionStatus) {
+            window.UI.setConnectionStatus(connected, state);
+            window.UI.setEngineStatus(window.Bridge.getEngineReady());
+        }
+    }
+
+    function onEngineError(error) {
+        waitingForEngine = false;
+        waitingForHint = false;
+        if (window.UI) {
+            window.UI.setEngineStatus(false);
+            window.UI.showToast('Не удалось запустить движок. Попробуйте начать новую игру.', 5000);
+        }
+        console.error('Engine unavailable:', error);
+    }
+
+    function isEngineTurn() {
+        return chess && chess.turn() !== (playerColor === 'white' ? 'w' : 'b');
+    }
+
+    function validateEngineMove(fen, moveStr) {
+        if (typeof moveStr !== 'string' || !/^[a-h][1-8][a-h][1-8][qrbn]?$/.test(moveStr)) return false;
+        var position = new Chess(fen);
+        return !!position.move({
+            from: moveStr.substring(0, 2),
+            to: moveStr.substring(2, 4),
+            promotion: moveStr.length > 4 ? moveStr[4] : undefined
+        });
+    }
+
+    function getEngineFEN(fen) {
+        var fields = fen.split(' ');
+        // chess-api.com принимает поле en passant только при возможном взятии.
+        // chess.js 0.10.3 записывает его после любого двойного хода пешки.
+        if (fields[3] !== '-') {
+            var position = new Chess(fen);
+            var canCaptureEnPassant = position.moves({ verbose: true }).some(function(move) {
+                return move.flags.indexOf('e') !== -1;
+            });
+            if (!canCaptureEnPassant) fields[3] = '-';
+        }
+        return fields.join(' ');
+    }
+
+    function cancelEngineSearch() {
+        searchGeneration++;
+        waitingForEngine = false;
+        waitingForHint = false;
+        if (window.Bridge) window.Bridge.stopSearch();
+    }
+
     function makeEngineMove() {
-        if (gameOver) return;
+        if (gameOver || !isEngineTurn() || waitingForEngine) return;
         waitingForEngine = true;
+        if (resettingEngine) return;
 
         var fen = chess.fen();
-        window.Bridge.setPosition(fen);
+        var generation = ++searchGeneration;
+        window.Bridge.setPosition(getEngineFEN(fen));
 
         // Передаём оставшееся время для оптимального тайм-менеджмента Stockfish
         var whiteTimeMs = getTimerMs('white');
@@ -214,7 +266,12 @@
 
         window.Bridge.startSearch({
             wtime: whiteTimeMs,
-            btime: blackTimeMs
+            btime: blackTimeMs,
+            validateMove: function(moveStr) { return validateEngineMove(fen, moveStr); },
+            onBestMove: function(moveStr, ponder) {
+                if (generation !== searchGeneration || chess.fen() !== fen || !waitingForEngine) return;
+                onEngineBestMove(moveStr, ponder);
+            }
         });
     }
 
@@ -368,6 +425,9 @@
     // ======================== Действия пользователя ========================
 
     function newGame() {
+        cancelEngineSearch();
+        var generation = searchGeneration;
+        resettingEngine = true;
         chess = new Chess();
         moveList = [];
         gameOver = false;
@@ -385,25 +445,25 @@
         }
         if (window.Sound) window.Sound.play('gameStart');
 
-        // Сбрасываем движок
-        if (window.Bridge) {
-            window.Bridge.sendCommand('ucinewgame');
-            window.Bridge.sendCommand('isready');
-        }
-
-        // Если игрок за чёрных, движок ходит первым
-        if (playerColor === 'black') {
-            waitingForEngine = true;
-            setTimeout(function() {
-                if (window.Bridge && window.Bridge.getEngineReady()) {
-                    makeEngineMove();
-                }
-            }, 300);
-        }
+        waitingForEngine = playerColor === 'black';
+        // Каждая новая партия заново проверяет доступность удалённого движка.
+        return Promise.resolve(window.Bridge.newGame()).then(function() {
+            if (generation !== searchGeneration) return;
+            resettingEngine = false;
+            waitingForEngine = false;
+            if (!window.Bridge.getEngineReady()) return;
+            if (isEngineTurn() && !gameOver) makeEngineMove();
+        }).catch(function(error) {
+            if (generation !== searchGeneration) return;
+            resettingEngine = false;
+            onEngineError(error);
+        });
     }
 
     function undoMove() {
-        if (gameOver || waitingForEngine) return false;
+        if (gameOver || waitingForEngine || waitingForHint || resettingEngine) return false;
+        // Первый ход движка за белых не образует пару с ходом игрока.
+        if (chess.history().length < 2) return false;
 
         // Откатываем 2 хода (ход движка + ход игрока)
         var undone1 = chess.undo();
@@ -426,15 +486,18 @@
     }
 
     function hint() {
-        if (waitingForEngine || gameOver) return;
+        if (waitingForEngine || waitingForHint || resettingEngine || gameOver || isEngineTurn()) return;
 
         var fen = chess.fen();
-        window.Bridge.setPosition(fen);
-        window.Bridge.startSearch({ movetime: 1000 });
-
-        var oldCallback = window.Bridge.callbacks ? window.Bridge.callbacks.onBestMove : null;
-        window.Bridge.setCallbacks({
+        var generation = ++searchGeneration;
+        waitingForHint = true;
+        window.Bridge.setPosition(getEngineFEN(fen));
+        window.Bridge.startSearch({
+            movetime: 1000,
+            validateMove: function(moveStr) { return validateEngineMove(fen, moveStr); },
             onBestMove: function(moveStr) {
+                if (generation !== searchGeneration || chess.fen() !== fen || gameOver) return;
+                waitingForHint = false;
                 // Подсветим ход на доске через greySquare
                 if (moveStr && moveStr.length >= 4) {
                     var from = moveStr.substring(0, 2);
@@ -443,8 +506,6 @@
                     highlightSquare(to);
                     setTimeout(function() { removeHighlights(); }, 2000);
                 }
-                // Восстанавливаем оригинальный колбэк
-                window.Bridge.setCallbacks({ onBestMove: onEngineBestMove, onInfo: onEngineInfo });
             }
         });
     }
@@ -475,6 +536,9 @@
     }
 
     function setPositionFromHistory(fen) {
+        cancelEngineSearch();
+        resettingEngine = false;
+        pendingPromotion = null;
         chess.load(fen);
         board.position(fen);
         updateStatus();
@@ -489,6 +553,7 @@
     window.Game = {
         init: init,
         makeMove: function(from, to, promotion) {
+            if (gameOver || waitingForEngine || waitingForHint || isEngineTurn()) return false;
             var move = chess.move({ from: from, to: to, promotion: promotion || 'q' });
             if (move) {
                 afterPlayerMove(move);

@@ -18,6 +18,10 @@
     <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90' fill='%23333'%3E♟️%3C/text%3E%3C/svg%3E">
 </head>
 <body>
+    <div id="connection-status" class="connection-indicator connecting" role="status" aria-live="polite" aria-label="Проверка соединения с chess-api.com" title="Проверка соединения с chess-api.com" tabindex="0">
+        <span class="connection-dot" aria-hidden="true"></span>
+        <span class="visually-hidden" id="connection-status-text">Проверка соединения с chess-api.com</span>
+    </div>
     <!-- Экран загрузки движка -->
     <div id="loading-screen" class="loading-screen">
         <div class="loading-content">
@@ -26,7 +30,7 @@
             <div class="loading-bar-track">
                 <div class="loading-bar-fill" id="loading-bar-fill"></div>
             </div>
-            <div class="loading-status" id="loading-status">Загрузка движка...</div>
+            <div class="loading-status" id="loading-status" role="status" aria-live="polite">Подключение к chess-api.com...</div>
         </div>
     </div>
 
@@ -36,7 +40,7 @@
                 <h1>BURCHESS <span class="badge">SUPREME</span></h1>
                 <div class="engine-indicator" id="engine-status">
                     <span class="status-led"></span>
-                    <span>Движок активен</span>
+                    <span class="engine-status-text">Подключение движка...</span>
                 </div>
             </div>
             <div class="header-controls">
@@ -172,10 +176,11 @@
             const loadingScreen = document.getElementById('loading-screen');
             const appContainer = document.getElementById('app-container');
 
-            // Анимация прогресс-бара во время загрузки wasm
+            // Анимация прогресс-бара во время подключения или загрузки движка
             let progress = 0;
+            let gameStarted = false;
             const progressInterval = setInterval(() => {
-                // Медленно ползём до 90%, остальное — после readyok
+                // Медленно ползём до 90%, остальное — после готовности движка
                 if (progress < 90) {
                     progress += Math.random() * 2;
                     progress = Math.min(progress, 90);
@@ -199,33 +204,47 @@
             const t0 = performance.now();
             const log = (msg) => console.log(`[Loading +${((performance.now() - t0) / 1000).toFixed(1)}s] ${msg}`);
 
-            // Запускаем движок через Bridge и ждём readyok
-            if (window.Bridge) {
-                log('Bridge найден, вызываем Bridge.init()...');
-                loadingStatus.textContent = 'Загрузка движка (113 МБ)...';
-                window.Bridge.init();
-                log('Bridge.init() завершён, Worker создан. Ждём uciok → readyok...');
-
-                window.Bridge.setCallbacks({
-                    onReady: function() {
-                        log('readyok получен — движок готов!');
-                        // Движок готов — инициализируем игру и скрываем загрузку
-                        if (window.Game && typeof window.Game.init === 'function') {
-                            log('Запускаем Game.init()...');
-                            window.Game.init();
-                            log('Game.init() завершён');
-                        }
-                        hideLoadingScreen();
-                        log('Загрузочный экран скрыт');
-                    }
-                });
-            } else {
-                log('Bridge НЕ найден! Запускаем без движка');
-                // Если Bridge не загружен — просто запускаем игру
+            function startGame() {
+                if (gameStarted) return;
+                gameStarted = true;
                 if (window.Game && typeof window.Game.init === 'function') {
                     window.Game.init();
                 }
                 hideLoadingScreen();
+            }
+
+            // Подписываемся до init(): удалённый движок может подключиться сразу.
+            if (window.Bridge) {
+                window.Bridge.setCallbacks({
+                    onReady: function() {
+                        log('Движок готов');
+                        startGame();
+                    },
+                    onConnectionChange: function(connected, state) {
+                        if (window.UI) window.UI.setConnectionStatus(connected, state);
+                        if (gameStarted) return;
+                        if (state === 'remote') {
+                            loadingStatus.textContent = 'chess-api.com подключён';
+                        } else if (state === 'local') {
+                            loadingStatus.textContent = 'chess-api.com недоступен. Загрузка локального движка (113 МБ)...';
+                        } else if (state === 'connecting') {
+                            loadingStatus.textContent = 'Подключение к chess-api.com...';
+                        }
+                    },
+                    onError: function(error) {
+                        log('Ошибка движка: ' + error);
+                        if (gameStarted) return;
+                        clearInterval(progressInterval);
+                        loadingStatus.setAttribute('role', 'alert');
+                        loadingStatus.textContent = 'Не удалось загрузить движок. Проверьте подключение и обновите страницу.';
+                    }
+                });
+                log('Проверяем соединение с chess-api.com');
+                window.Bridge.init();
+            } else {
+                log('Bridge НЕ найден! Запускаем без движка');
+                if (window.UI) window.UI.setConnectionStatus(false, 'error');
+                startGame();
             }
         });
     </script>
