@@ -30,7 +30,7 @@
             <div class="loading-bar-track">
                 <div class="loading-bar-fill" id="loading-bar-fill"></div>
             </div>
-            <div class="loading-status" id="loading-status" role="status" aria-live="polite">Подключение к chess-api.com...</div>
+            <div class="loading-status" id="loading-status" role="status" aria-live="polite">Подключение к серверу с движком президента школы Марика</div>
         </div>
     </div>
 
@@ -228,7 +228,7 @@
                         } else if (state === 'local') {
                             loadingStatus.textContent = 'chess-api.com недоступен. Загрузка локального движка (113 МБ)...';
                         } else if (state === 'connecting') {
-                            loadingStatus.textContent = 'Подключение к chess-api.com...';
+                            loadingStatus.textContent = 'Подключение к серверу с движком президента школы Марика';
                         }
                     },
                     onError: function(error) {
