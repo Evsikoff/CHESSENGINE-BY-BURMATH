@@ -18,9 +18,9 @@
     <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90' fill='%23333'%3E♟️%3C/text%3E%3C/svg%3E">
 </head>
 <body>
-    <div id="connection-status" class="connection-indicator connecting" role="status" aria-live="polite" aria-label="Проверка соединения с chess-api.com" title="Проверка соединения с chess-api.com" tabindex="0">
+    <div id="connection-status" class="connection-indicator connecting" role="status" aria-live="polite" aria-label="Проверка соединения с «супер движок Марика»" title="Проверка соединения с «супер движок Марика»" tabindex="0">
         <span class="connection-dot" aria-hidden="true"></span>
-        <span class="visually-hidden" id="connection-status-text">Проверка соединения с chess-api.com</span>
+        <span class="visually-hidden" id="connection-status-text">Проверка соединения с «супер движок Марика»</span>
     </div>
     <!-- Экран загрузки движка -->
     <div id="loading-screen" class="loading-screen">
@@ -224,9 +224,9 @@
                         if (window.UI) window.UI.setConnectionStatus(connected, state);
                         if (gameStarted) return;
                         if (state === 'remote') {
-                            loadingStatus.textContent = 'chess-api.com подключён';
+                            loadingStatus.textContent = 'супер движок Марика подключён';
                         } else if (state === 'local') {
-                            loadingStatus.textContent = 'chess-api.com недоступен. Загрузка локального движка (113 МБ)...';
+                            loadingStatus.textContent = 'супер движок Марика недоступен. Загрузка локального движка (113 МБ)...';
                         } else if (state === 'connecting') {
                             loadingStatus.textContent = 'Подключение к серверу с движком президента школы Марика';
                         }
@@ -239,7 +239,7 @@
                         loadingStatus.textContent = 'Не удалось загрузить движок. Проверьте подключение и обновите страницу.';
                     }
                 });
-                log('Проверяем соединение с chess-api.com');
+                log('Проверяем соединение с «супер движок Марика»');
                 window.Bridge.init();
             } else {
                 log('Bridge НЕ найден! Запускаем без движка');

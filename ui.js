@@ -405,7 +405,7 @@
         } else if (UI.connectionState === 'error') {
             label.textContent = 'Движок недоступен';
         } else {
-            var name = UI.connectionState === 'remote' ? 'chess-api.com' : 'Локальный движок';
+            var name = UI.connectionState === 'remote' ? 'супер движок Марика' : 'Локальный движок';
             label.textContent = name + (UI.engineActive ? ' активен' : ' загружается...');
         }
     }
@@ -414,10 +414,10 @@
         UI.connectionState = connected ? 'remote' : (state || 'local');
         var element = UI.elements.connectionStatus || document.getElementById('connection-status');
         if (element) {
-            var description = connected ? 'Соединение с chess-api.com установлено. Вы играете с удалённым движком.' :
-                UI.connectionState === 'connecting' ? 'Проверка соединения с chess-api.com' :
+            var description = connected ? 'Соединение с «супер движок Марика» установлено. Вы играете с удалённым движком.' :
+                UI.connectionState === 'connecting' ? 'Проверка соединения с «супер движок Марика»' :
                 UI.connectionState === 'error' ? 'Движок недоступен' :
-                'chess-api.com недоступен. Используется локальный движок.';
+                'супер движок Марика недоступен. Используется локальный движок.';
             element.classList.toggle('connected', !!connected);
             element.classList.toggle('connecting', UI.connectionState === 'connecting');
             element.setAttribute('title', description);
